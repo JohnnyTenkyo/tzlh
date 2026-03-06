@@ -59,3 +59,12 @@
 - [x] 认证API测试（1个）
 - [x] Finnhub API测试（1个）
 - [x] 共18个测试全部通过
+
+## 新功能优化（第二轮）
+- [x] 从meiguzuizhong-backup和meigulianghua3.6读取股票池并合并（793只）
+- [x] 更新shared/stockPool.ts为完整股票池（去重）
+- [x] 集成TradingView Lightweight Charts库
+- [x] 回测详情页添加K线图（含买卖点标注）
+- [x] 股票推荐详情添加K线图（含黄蓝梯子指标线）
+- [x] 服务端添加node-cron定时扫描（美东9:00和12:30）
+- [x] 前端显示下次扫描时间

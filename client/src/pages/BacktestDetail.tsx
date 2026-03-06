@@ -17,6 +17,8 @@ import {
   BarChart2, Clock, Target, AlertCircle, Loader2,
   ArrowUpRight, ArrowDownRight, Info
 } from "lucide-react";
+import StockChart, { type TradeMarker } from "@/components/StockChart";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TIMEFRAME_LABELS, MARKET_CAP_LABELS } from "@shared/stockPool";
 
 function MetricCard({ label, value, sub, positive }: {
@@ -33,6 +35,87 @@ function MetricCard({ label, value, sub, positive }: {
           {value}
         </p>
         {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+// K线图选股组件
+function KLineTab({
+  trades,
+  startDate,
+  endDate,
+}: {
+  trades: Array<{ symbol: string; type: string; tradeDate: string; price: string }>;
+  startDate: string;
+  endDate: string;
+}) {
+  // 获取回测中涉及的所有股票
+  const symbols = Array.from(new Set(trades.map((t) => t.symbol)));
+  const [selectedSymbol, setSelectedSymbol] = useState<string>(symbols[0] || "");
+  const [selectedTf, setSelectedTf] = useState<string>("1d");
+
+  if (symbols.length === 0) {
+    return (
+      <Card className="bg-card border-border">
+        <CardContent className="py-12 text-center text-muted-foreground text-sm">
+          回测完成后可查看K线图
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const markers: TradeMarker[] = trades
+    .filter((t) => t.symbol === selectedSymbol)
+    .map((t) => ({
+      date: t.tradeDate,
+      type: t.type as "buy" | "sell",
+      price: parseFloat(t.price),
+    }));
+
+  return (
+    <Card className="bg-card border-border">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <CardTitle className="text-sm font-medium">K线图（黄蓝梯子 + 买卖点标注）</CardTitle>
+          <div className="flex gap-2">
+            <Select value={selectedSymbol} onValueChange={setSelectedSymbol}>
+              <SelectTrigger className="h-7 text-xs w-28">
+                <SelectValue placeholder="选股票" />
+              </SelectTrigger>
+              <SelectContent>
+                {symbols.map((s) => (
+                  <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={selectedTf} onValueChange={setSelectedTf}>
+              <SelectTrigger className="h-7 text-xs w-24">
+                <SelectValue placeholder="时间级别" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1d" className="text-xs">日线</SelectItem>
+                <SelectItem value="4h" className="text-xs">4小时</SelectItem>
+                <SelectItem value="1h" className="text-xs">1小时</SelectItem>
+                <SelectItem value="30m" className="text-xs">30分钟</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="p-0 pb-4 px-4">
+        <StockChart
+          symbol={selectedSymbol}
+          timeframe={selectedTf}
+          startDate={startDate}
+          endDate={endDate}
+          tradeMarkers={markers}
+          height={450}
+          showLadder={true}
+        />
+        <p className="text-xs text-muted-foreground mt-2 text-center">
+          绿色↑ = 买入点 | 红色↓ = 卖出点 | 蓝线 = 蓝色梯子 | 黄线 = 黄色梯子
+        </p>
       </CardContent>
     </Card>
   );
@@ -249,6 +332,7 @@ export default function BacktestDetail() {
         <Tabs defaultValue="chart" className="space-y-4">
           <TabsList className="bg-muted">
             <TabsTrigger value="chart" className="text-xs">收益曲线</TabsTrigger>
+            <TabsTrigger value="kline" className="text-xs">K线图</TabsTrigger>
             <TabsTrigger value="trades" className="text-xs">买卖记录</TabsTrigger>
             <TabsTrigger value="config" className="text-xs">回测条件</TabsTrigger>
           </TabsList>
@@ -334,6 +418,15 @@ export default function BacktestDetail() {
                 </Card>
               </div>
             )}
+          </TabsContent>
+
+          {/* K线图 Tab */}
+          <TabsContent value="kline">
+            <KLineTab
+              trades={trades}
+              startDate={session.startDate}
+              endDate={session.endDate}
+            />
           </TabsContent>
 
           {/* Trade Records */}

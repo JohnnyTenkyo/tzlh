@@ -15,8 +15,11 @@ import { eq, and, desc, inArray } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { getTodayRecommendations, runDailyScan, getScanStatus } from "./screener";
+import { getSchedulerStatus } from "./scheduler";
 import { runBacktest, isBacktestRunning } from "./backtestEngine";
+import { calculateLadder } from "./indicators";
 import type { Timeframe } from "./indicators";
+import { fetchHistoricalCandles } from "./marketData";
 
 const JWT_SECRET = process.env.JWT_SECRET || "quant-backtest-secret-key";
 
@@ -136,7 +139,9 @@ export const appRouter = router({
     }),
 
     getStatus: publicProcedure.query(() => {
-      return getScanStatus();
+      const scanStatus = getScanStatus();
+      const schedulerStatus = getSchedulerStatus();
+      return { ...scanStatus, scheduler: schedulerStatus };
     }),
   }),
 
@@ -275,6 +280,38 @@ export const appRouter = router({
           ));
 
         return { success: true, sessions };
+      }),
+  }),
+
+  // ============ K线图数据 ============
+  chart: router({
+    getCandles: publicProcedure
+      .input(z.object({
+        symbol: z.string(),
+        timeframe: z.string().default("1d"),
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+      }))
+      .query(async ({ input }) => {
+        const tf = input.timeframe as Timeframe;
+        const endDate = input.endDate || new Date().toISOString().split("T")[0];
+        const startDate = input.startDate || (() => {
+          const d = new Date();
+          d.setFullYear(d.getFullYear() - 1);
+          return d.toISOString().split("T")[0];
+        })();
+
+        const candles = await fetchHistoricalCandles(input.symbol, tf, startDate, endDate);
+        if (candles.length === 0) return { candles: [], blueUp: [], blueDn: [], yellowUp: [], yellowDn: [] };
+
+        // 计算黄蓝梯子指标
+        const ladder = calculateLadder(candles);
+        const blueUp = candles.map((c, i) => ({ time: c.time, value: ladder.blueUp[i] ?? 0 })).filter(v => v.value > 0);
+        const blueDn = candles.map((c, i) => ({ time: c.time, value: ladder.blueDn[i] ?? 0 })).filter(v => v.value > 0);
+        const yellowUp = candles.map((c, i) => ({ time: c.time, value: ladder.yellowUp[i] ?? 0 })).filter(v => v.value > 0);
+        const yellowDn = candles.map((c, i) => ({ time: c.time, value: ladder.yellowDn[i] ?? 0 })).filter(v => v.value > 0);
+
+        return { candles, blueUp, blueDn, yellowUp, yellowDn };
       }),
   }),
 });

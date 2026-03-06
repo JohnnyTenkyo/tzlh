@@ -361,7 +361,7 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
     if (dates.length === 0) throw new Error("日期范围无效");
 
     // 确定要回测的股票列表
-    let stocksToTest = US_STOCKS.filter(s => !["QQQ", "SPY", "TQQQ", "SOXL", "ARKK"].includes(s));
+    let stocksToTest = US_STOCKS.filter(s => !["QQQ", "SPY", "TQQQ", "SOXL", "ARKK"].includes(s.symbol)).map(s => s.symbol);
     stocksToTest = stocksToTest.slice(0, 30); // 限制30只以控制时间
 
     const state: BacktestState = {
@@ -394,7 +394,7 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
 
     // 逐股票回测
     for (let si = 0; si < stocksToTest.length; si++) {
-      const symbol = stocksToTest[si];
+      const symbol: string = stocksToTest[si]!;
 
       // 获取该股票所有时间级别的历史数据
       const allCandlesByTf: Partial<Record<Timeframe, Candle[]>> = {};

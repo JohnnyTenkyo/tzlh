@@ -68,12 +68,12 @@ export async function runDailyScan(forceRefresh = false): Promise<Strategy4321Sc
 
   const results: Strategy4321Score[] = [];
   const batchSize = 5;
-  const stocksToScan = US_STOCKS.slice(0, 80); // 扫描前80只
+  const stocksToScan = US_STOCKS.slice(0, 200).map(s => s.symbol); // 扫描前200只
 
   for (let i = 0; i < stocksToScan.length; i += batchSize) {
     const batch = stocksToScan.slice(i, i + batchSize);
     const batchResults = await Promise.allSettled(
-      batch.map(symbol => scanStock(symbol))
+      batch.map((symbol: string) => scanStock(symbol))
     );
 
     for (const r of batchResults) {

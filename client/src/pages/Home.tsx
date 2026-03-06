@@ -10,8 +10,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import {
   TrendingUp, RefreshCw, Star, Clock, BarChart2,
-  ChevronRight, AlertCircle, Zap, Target, Info
+  ChevronRight, AlertCircle, Zap, Target, Info, LineChart
 } from "lucide-react";
+import StockChart from "@/components/StockChart";
 
 const MATCH_LEVEL_LABELS: Record<string, string> = {
   "4321": "4321打法",
@@ -47,11 +48,22 @@ interface RecommendationItem {
 }
 
 function RecommendationCard({ item, rank }: { item: RecommendationItem; rank: number }) {
-  const [, navigate] = useLocation();
+  const [showChart, setShowChart] = useState(false);
+  const [chartReady, setChartReady] = useState(false);
+
+  // 延迟渲染图表，确保容器展开动画完成后再初始化
+  const handleToggleChart = () => {
+    if (!showChart) {
+      setShowChart(true);
+      setTimeout(() => setChartReady(true), 100);
+    } else {
+      setShowChart(false);
+      setChartReady(false);
+    }
+  };
 
   return (
-    <Card className="bg-card border-border hover:border-primary/30 transition-all cursor-pointer group"
-      onClick={() => window.open(`https://finance.yahoo.com/chart/${item.symbol}`, "_blank")}>
+    <Card className="bg-card border-border hover:border-primary/30 transition-all">
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -85,10 +97,38 @@ function RecommendationCard({ item, rank }: { item: RecommendationItem; rank: nu
           </div>
           <div className="flex flex-col items-end gap-1">
             <ScoreBadge score={item.totalScore} />
-            <ChevronRight size={14} className="text-muted-foreground group-hover:text-primary transition-colors" />
+            <button
+              onClick={handleToggleChart}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors mt-1"
+            >
+              <LineChart size={12} />
+              {showChart ? "收起" : "K线图"}
+            </button>
           </div>
         </div>
         <p className="text-xs text-muted-foreground mt-3 leading-relaxed">{item.reason}</p>
+        {showChart && (
+          <div className="mt-4">
+            {chartReady ? (
+              <StockChart
+                symbol={item.symbol}
+                timeframe="1d"
+                height={320}
+                showLadder={true}
+              />
+            ) : (
+              <div className="flex items-center justify-center bg-slate-900 rounded-lg" style={{ height: 320 }}>
+                <div className="flex flex-col items-center gap-2 text-slate-400">
+                  <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-sm">加载图表...</span>
+                </div>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground mt-1 text-center">
+              蓝线 = 蓝色梯子 | 黄线 = 黄色梯子（日线）
+            </p>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -132,6 +172,14 @@ export default function Home() {
             <p className="text-sm text-muted-foreground mt-1">
               基于4321打法扫描美股，按匹配度评分排列
             </p>
+            {statusData?.scheduler && (
+              <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground/70">
+                <span className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block"></span>
+                  自动扫描：美东 9:00 和 12:30（周一至周五）
+                </span>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {scanDate && (
