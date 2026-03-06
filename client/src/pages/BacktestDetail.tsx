@@ -560,8 +560,36 @@ export default function BacktestDetail() {
                     <p className="text-foreground font-medium">过去 {session.cdLookbackBars} 根K线</p>
                   </div>
                 </div>
+                {/* 激进策略持仓说明 */}
+                {(session as any).strategy === "aggressive" && (
+                  <div className="p-3 rounded-lg bg-orange-500/5 border border-orange-500/20">
+                    <p className="text-xs font-medium text-orange-400 mb-2">⚡ 激进策略持仓说明</p>
+                    <div className="space-y-1.5 text-xs text-foreground leading-relaxed">
+                      <div>
+                        <p className="font-medium text-orange-300 mb-0.5">📄 买入逻辑：</p>
+                        <p className="text-muted-foreground pl-3">• 出现CD抵低信号（需满足指定的所有等级）</p>
+                        <p className="text-muted-foreground pl-3">• 30分钟级别收盘价站上蓝色梅子上边缘即买入</p>
+                        <p className="text-muted-foreground pl-3">• 位置大小：余额的 50%</p>
+                      </div>
+                      <div>
+                        <p className="font-medium text-orange-300 mb-0.5">📄 加仓逻辑：</p>
+                        <p className="text-muted-foreground pl-3">• 第一加仓：蓝色梅子突破黄色梅子上边缘</p>
+                        <p className="text-muted-foreground pl-3">• 第二加仓：蓝色梅子回撞黄色梅子（不破下边缘）+ CD抵低信号</p>
+                        <p className="text-muted-foreground pl-3">• 每次加仓位置：余额的 20%</p>
+                      </div>
+                      <div>
+                        <p className="font-medium text-orange-300 mb-0.5">📄 止损逻辑：</p>
+                        <p className="text-muted-foreground pl-3">• 收盘价跌破蓝色梅子下边缘 → 立即止损清仓</p>
+                      </div>
+                      <div>
+                        <p className="font-medium text-orange-300 mb-0.5">📄 退出逻辑：</p>
+                        <p className="text-muted-foreground pl-3">• 蓝色梅子上边缘 &lt; 黄色梅子下边缘 → 清仓所有持仓</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div>
-                  <p className="text-xs text-muted-foreground mb-2">CD抄底信号级别（需同时满足）</p>
+                  <p className="text-xs text-muted-foreground mb-2">CD抵低信号级别（需同时满足）</p>
                   <div className="flex flex-wrap gap-1.5">
                     {cdTimeframes.map(tf => (
                       <span key={tf} className="px-2 py-1 rounded bg-primary/10 text-primary text-xs">

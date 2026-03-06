@@ -14,7 +14,8 @@ import {
 import { getDb } from "./db";
 import { stockRecommendations } from "../drizzle/schema";
 import { eq, and } from "drizzle-orm";
-import { US_STOCKS } from "../shared/stockPool";
+import { US_STOCKS } from "@shared/stockPool";
+import { notifyOwner } from "./_core/notification";
 
 let isScanning = false;
 const scanCache: Map<string, AggressiveScore> = new Map();
@@ -134,13 +135,35 @@ export async function runDailyScan(forceRefresh = false): Promise<AggressiveScor
   isScanning = false;
   console.log(`[Screener] Scan complete. Found ${results.length} signals.`);
 
+  // 推送扫描完成通知
+  try {
+    const standardSignals = results.filter(r => !r.aggressiveSignal);
+    const aggressiveSignals = results.filter(r => r.aggressiveSignal);
+    
+    const summary = `今日扫描完成：找到 ${results.length} 个信号\n📊 标准策略: ${standardSignals.length} 个\n⚡ 激进策略: ${aggressiveSignals.length} 个`;
+    
+    const topStandard = standardSignals.slice(0, 3).map(s => `${s.symbol}(${s.totalScore.toFixed(1)})`).join(", ");
+    const topAggressive = aggressiveSignals.slice(0, 3).map(s => `${s.symbol}(${s.totalScore.toFixed(1)})`).join(", ");
+    
+    let content = summary + "\n\n";
+    if (topStandard) content += `📊 标准信号TOP3: ${topStandard}\n`;
+    if (topAggressive) content += `⚡ 激进信号TOP3: ${topAggressive}`;
+    
+    await notifyOwner({
+      title: `📊 量化扫描 - ${today}`,
+      content,
+    });
+  } catch (err) {
+    console.error("[Screener] Failed to send notification:", err);
+  }
+
   return results.sort((a, b) => b.totalScore - a.totalScore);
 }
 
 /**
  * 获取今日推荐（优先从数据库读取）
  */
-export async function getTodayRecommendations(): Promise<{
+export async function getTodayRecommendations(sendNotification = false): Promise<{
   results: AggressiveScore[];
   fromCache: boolean;
   scanDate: string;

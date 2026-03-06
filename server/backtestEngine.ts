@@ -69,6 +69,41 @@ interface BacktestState {
 // 运行中的回测任务
 const runningTasks = new Map<number, boolean>();
 
+// K线数据缓存（避免重复API调用）
+const candleCache = new Map<string, Candle[]>();
+const CACHE_KEY_SEPARATOR = "::";
+
+function getCacheKey(symbol: string, tf: Timeframe, startDate: string, endDate: string): string {
+  return `${symbol}${CACHE_KEY_SEPARATOR}${tf}${CACHE_KEY_SEPARATOR}${startDate}${CACHE_KEY_SEPARATOR}${endDate}`;
+}
+
+/**
+ * 从缓存或API获取K线数据
+ */
+async function getCandlesWithCache(
+  symbol: string,
+  tf: Timeframe,
+  startDate: string,
+  endDate: string
+): Promise<Candle[]> {
+  const cacheKey = getCacheKey(symbol, tf, startDate, endDate);
+  
+  if (candleCache.has(cacheKey)) {
+    return candleCache.get(cacheKey)!;
+  }
+  
+  const candles = await fetchHistoricalCandles(symbol, tf, startDate, endDate);
+  candleCache.set(cacheKey, candles);
+  
+  // 缓存大小超过100条记录时清理最旧的记录
+  if (candleCache.size > 100) {
+    const firstKey = candleCache.keys().next().value as string | undefined;
+    if (firstKey) candleCache.delete(firstKey);
+  }
+  
+  return candles;
+}
+
 /**
  * 获取日期列表（工作日）
  */
@@ -514,8 +549,8 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
 
     // 获取基准数据（QQQ/SPY）
     const [qqqCandles, spyCandles] = await Promise.all([
-      fetchHistoricalCandles("QQQ", "1d", dataStartDate, config.endDate),
-      fetchHistoricalCandles("SPY", "1d", dataStartDate, config.endDate),
+      getCandlesWithCache("QQQ", "1d", dataStartDate, config.endDate),
+      getCandlesWithCache("SPY", "1d", dataStartDate, config.endDate),
     ]);
 
     const qqqStart = getClosePriceOnDate(qqqCandles, dates[0]);
@@ -530,7 +565,7 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
       // 获取该股票所有时间级别的历史数据（包含预热期）
       const allCandlesByTf: Partial<Record<Timeframe, Candle[]>> = {};
       for (const tf of allTf) {
-        const c = await fetchHistoricalCandles(symbol, tf, dataStartDate, config.endDate);
+        const c = await getCandlesWithCache(symbol, tf, dataStartDate, config.endDate);
         if (c.length > 0) allCandlesByTf[tf] = c;
       }
 
@@ -546,7 +581,7 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
     // 计算每日净值曲线
     const dailyCandles: Record<string, Candle[]> = {};
     for (const symbol of Array.from(state.positions.keys())) {
-      const c = await fetchHistoricalCandles(symbol, "1d", config.startDate, config.endDate);
+      const c = await getCandlesWithCache(symbol, "1d", config.startDate, config.endDate);
       if (c.length > 0) dailyCandles[symbol] = c;
     }
 
