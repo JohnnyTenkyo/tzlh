@@ -59,23 +59,20 @@ const TIMEFRAME_OPTIONS = [
 
 function RecommendationCard({ item, rank }: { item: RecommendationItem; rank: number }) {
   const [showChart, setShowChart] = useState(false);
-  const [chartReady, setChartReady] = useState(false);
   const [chartTimeframe, setChartTimeframe] = useState("1d");
 
+  // 查询 chart 数据
+  const { data: chartData } = trpc.chart.getCandles.useQuery(
+    { symbol: item.symbol, timeframe: chartTimeframe },
+    { enabled: showChart }
+  );
+
   const handleToggleChart = () => {
-    if (!showChart) {
-      setShowChart(true);
-      setTimeout(() => setChartReady(true), 100);
-    } else {
-      setShowChart(false);
-      setChartReady(false);
-    }
+    setShowChart(!showChart);
   };
 
   const handleTimeframeChange = (tf: string) => {
     setChartTimeframe(tf);
-    setChartReady(false);
-    setTimeout(() => setChartReady(true), 50);
   };
 
   return (
@@ -154,10 +151,16 @@ function RecommendationCard({ item, rank }: { item: RecommendationItem; rank: nu
                 </button>
               ))}
             </div>
-            {chartReady ? (
+            {chartData ? (
               <StockChart
-                symbol={item.symbol}
-                timeframe={chartTimeframe}
+                candles={chartData.candles}
+                interval={chartData.interval}
+                cdSignals={chartData.cdSignals}
+                buySellPressure={chartData.buySellPressure}
+                momentumSignals={chartData.momentumSignals}
+                chanLunSignals={chartData.chanLunSignals}
+                advancedChanData={chartData.advancedChanData}
+                advancedChanSignals={chartData.advancedChanSignals}
                 height={320}
                 showLadder={true}
               />

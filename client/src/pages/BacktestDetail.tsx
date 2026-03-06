@@ -17,7 +17,7 @@ import {
   BarChart2, Clock, Target, AlertCircle, Loader2,
   ArrowUpRight, ArrowDownRight, Info
 } from "lucide-react";
-import StockChart, { type TradeMarker } from "@/components/StockChart";
+import StockChart from "@/components/StockChart";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TIMEFRAME_LABELS, MARKET_CAP_LABELS } from "@shared/stockPool";
 
@@ -55,6 +55,12 @@ function KLineTab({
   const [selectedSymbol, setSelectedSymbol] = useState<string>(symbols[0] || "");
   const [selectedTf, setSelectedTf] = useState<string>("1d");
 
+  // 查询 chart 数据
+  const { data: chartData } = trpc.chart.getCandles.useQuery(
+    { symbol: selectedSymbol, timeframe: selectedTf, startDate, endDate },
+    { enabled: !!selectedSymbol }
+  );
+
   if (symbols.length === 0) {
     return (
       <Card className="bg-card border-border">
@@ -65,13 +71,7 @@ function KLineTab({
     );
   }
 
-  const markers: TradeMarker[] = trades
-    .filter((t) => t.symbol === selectedSymbol)
-    .map((t) => ({
-      date: t.tradeDate,
-      type: t.type as "buy" | "sell",
-      price: parseFloat(t.price),
-    }));
+  // markers 已移至 StockChart 的内部处理
 
   return (
     <Card className="bg-card border-border">
@@ -104,15 +104,20 @@ function KLineTab({
         </div>
       </CardHeader>
       <CardContent className="p-0 pb-4 px-4">
-        <StockChart
-          symbol={selectedSymbol}
-          timeframe={selectedTf}
-          startDate={startDate}
-          endDate={endDate}
-          tradeMarkers={markers}
-          height={450}
-          showLadder={true}
-        />
+        {chartData && (
+          <StockChart
+            candles={chartData.candles}
+            interval={chartData.interval}
+            cdSignals={chartData.cdSignals}
+            buySellPressure={chartData.buySellPressure}
+            momentumSignals={chartData.momentumSignals}
+            chanLunSignals={chartData.chanLunSignals}
+            advancedChanData={chartData.advancedChanData}
+            advancedChanSignals={chartData.advancedChanSignals}
+            height={450}
+            showLadder={true}
+          />
+        )}
         <p className="text-xs text-muted-foreground mt-2 text-center">
           绿色↑ = 买入点 | 红色↓ = 卖出点 | 蓝线 = 蓝色梯子 | 黄线 = 黄色梯子
         </p>

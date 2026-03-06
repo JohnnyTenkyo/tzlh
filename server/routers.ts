@@ -312,16 +312,37 @@ export const appRouter = router({
         })();
 
         const candles = await fetchHistoricalCandles(input.symbol, tf, startDate, endDate);
-        if (candles.length === 0) return { candles: [], blueUp: [], blueDn: [], yellowUp: [], yellowDn: [] };
+        if (candles.length === 0) {
+          return {
+            candles: [],
+            interval: tf,
+            cdSignals: [],
+            buySellPressure: [],
+            momentumSignals: [],
+            chanLunSignals: [],
+            advancedChanData: [],
+            advancedChanSignals: [],
+          };
+        }
 
         // 计算黄蓝梯子指标
         const ladder = calculateLadder(candles);
-        const blueUp = candles.map((c, i) => ({ time: c.time, value: ladder.blueUp[i] ?? 0 })).filter(v => v.value > 0);
-        const blueDn = candles.map((c, i) => ({ time: c.time, value: ladder.blueDn[i] ?? 0 })).filter(v => v.value > 0);
-        const yellowUp = candles.map((c, i) => ({ time: c.time, value: ladder.yellowUp[i] ?? 0 })).filter(v => v.value > 0);
-        const yellowDn = candles.map((c, i) => ({ time: c.time, value: ladder.yellowDn[i] ?? 0 })).filter(v => v.value > 0);
 
-        return { candles, blueUp, blueDn, yellowUp, yellowDn };
+        // 返回新的 StockChart Props 格式
+        return {
+          candles,
+          interval: tf as any,
+          cdSignals: [] as any,
+          buySellPressure: candles.map((c, i) => ({
+            time: c.time,
+            pressure: 0,
+            changeRate: 0,
+          })),
+          momentumSignals: [],
+          chanLunSignals: [],
+          advancedChanData: [],
+          advancedChanSignals: [],
+        };
       }),
   }),
 });
