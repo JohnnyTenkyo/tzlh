@@ -115,3 +115,9 @@
 - [ ] 从 meiguzuizhong-backup 仓库拷贝 K 线组件
 - [ ] 替换 StockChart.tsx 完整实现
 - [ ] 调整依赖和导入路径
+
+## 第十轮修复（回测无买卖信号）
+- [x] 排查 backtestEngine.ts 中信号检测逻辑
+- [x] 排查 indicators.ts 中 detectCDSignal / detectLadderBreak 函数
+- [x] 修复信号检测问题（序列批量数据获取）
+- [x] 编写模拟数据测试脚本验证回测引擎正常工作

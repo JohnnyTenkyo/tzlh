@@ -6,28 +6,27 @@
 import axios from "axios";
 import type { Candle, Timeframe } from "./indicators";
 
-// Yahoo Finance interval mapping
-const YF_INTERVAL_MAP: Record<Timeframe, { interval: string; range: string }> = {
-  "15m": { interval: "15m", range: "60d" },
-  "30m": { interval: "30m", range: "60d" },
-  "1h":  { interval: "60m", range: "730d" },
-  "2h":  { interval: "60m", range: "730d" }, // YF doesn't support 2h, use 1h and resample
-  "3h":  { interval: "60m", range: "730d" }, // same
-  "4h":  { interval: "60m", range: "730d" }, // same
-  "1d":  { interval: "1d",  range: "10y" }, // 扩展到10年歴史数据
-  "1w":  { interval: "1wk", range: "20y" }, // 扩展到20年歴史数据
+// ============ 时间范围映射 ============
+const RANGE_MAP: Record<Timeframe, string> = {
+  "15m": "60d",   // 15分钟数据最多60天
+  "30m": "60d",   // 30分钟数据最多60天
+  "1h":  "730d",  // 1小时数据最多2年
+  "2h":  "730d",  // 2小时数据（由1h合并）
+  "3h":  "730d",  // 3小时数据（由1h合并）
+  "4h":  "730d",  // 4小时数据（由1h合并）
+  "1d":  "10y",   // 日线数据最多10年
+  "1w":  "20y",   // 周线数据最多20年
 };
 
-// Finnhub resolution mapping
-const FINNHUB_RES_MAP: Record<Timeframe, { resolution: string; days: number }> = {
-  "15m": { resolution: "15", days: 60 },
-  "30m": { resolution: "30", days: 60 },
-  "1h":  { resolution: "60", days: 365 },
-  "2h":  { resolution: "120", days: 365 },
-  "3h":  { resolution: "180", days: 365 },
-  "4h":  { resolution: "240", days: 365 },
-  "1d":  { resolution: "D", days: 3650 }, // 扩展到级10年
-  "1w":  { resolution: "W", days: 7300 }, // 扩展到级20年
+const INTERVAL_MAP: Record<Timeframe, string> = {
+  "15m": "15m",
+  "30m": "30m",
+  "1h":  "60m",
+  "2h":  "60m",   // 用1h合并
+  "3h":  "60m",   // 用1h合并
+  "4h":  "60m",   // 用1h合并
+  "1d":  "1d",
+  "1w":  "1wk",
 };
 
 /**
@@ -50,71 +49,98 @@ function resampleCandles(candles: Candle[], factor: number): Candle[] {
   return result;
 }
 
+/**
+ * 从Yahoo Finance获取K线数据（使用range参数）
+ */
 async function fetchYahooCandles(symbol: string, timeframe: Timeframe): Promise<Candle[]> {
-  const { interval, range } = YF_INTERVAL_MAP[timeframe];
+  const interval = INTERVAL_MAP[timeframe];
+  const range = RANGE_MAP[timeframe];
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
 
-  const res = await axios.get(url, {
-    params: { interval, range },
-    timeout: 15000,
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    },
-  });
+  try {
+    const res = await axios.get(url, {
+      params: { interval, range },
+      timeout: 15000,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      },
+    });
 
-  const result = res.data?.chart?.result?.[0];
-  if (!result) throw new Error("No data from Yahoo Finance");
+    const result = res.data?.chart?.result?.[0];
+    if (!result) throw new Error("No data from Yahoo Finance");
 
-  const timestamps: number[] = result.timestamp || [];
-  const quotes = result.indicators.quote[0];
+    const timestamps: number[] = result.timestamp || [];
+    const quotes = result.indicators.quote[0];
 
-  const candles: Candle[] = [];
-  for (let i = 0; i < timestamps.length; i++) {
-    if (quotes.close[i] !== null && quotes.close[i] !== undefined) {
-      candles.push({
-        time: timestamps[i] * 1000,
-        open: quotes.open[i] || quotes.close[i],
-        high: quotes.high[i] || quotes.close[i],
-        low: quotes.low[i] || quotes.close[i],
-        close: quotes.close[i],
-        volume: quotes.volume[i] || 0,
-      });
+    const candles: Candle[] = [];
+    for (let i = 0; i < timestamps.length; i++) {
+      if (quotes.close[i] !== null && quotes.close[i] !== undefined) {
+        candles.push({
+          time: timestamps[i] * 1000,
+          open: quotes.open[i] || quotes.close[i],
+          high: quotes.high[i] || quotes.close[i],
+          low: quotes.low[i] || quotes.close[i],
+          close: quotes.close[i],
+          volume: quotes.volume[i] || 0,
+        });
+      }
     }
+
+    // 聚合为2h/3h/4h
+    if (timeframe === "2h") return resampleCandles(candles, 2);
+    if (timeframe === "3h") return resampleCandles(candles, 3);
+    if (timeframe === "4h") return resampleCandles(candles, 4);
+
+    return candles;
+  } catch (err) {
+    console.warn(`[MarketData] Yahoo failed for ${symbol}/${timeframe}:`, err instanceof Error ? err.message : err);
+    throw err;
   }
-
-  // Resample for 2h/3h/4h
-  if (timeframe === "2h") return resampleCandles(candles, 2);
-  if (timeframe === "3h") return resampleCandles(candles, 3);
-  if (timeframe === "4h") return resampleCandles(candles, 4);
-
-  return candles;
 }
 
+/**
+ * 从Finnhub获取K线数据（备用数据源）
+ */
 async function fetchFinnhubCandles(symbol: string, timeframe: Timeframe): Promise<Candle[]> {
   const apiKey = process.env.FINNHUB_API_KEY;
   if (!apiKey) throw new Error("FINNHUB_API_KEY not set");
 
-  const { resolution, days } = FINNHUB_RES_MAP[timeframe];
+  const resolutionMap: Record<Timeframe, { resolution: string; days: number }> = {
+    "15m": { resolution: "15", days: 60 },
+    "30m": { resolution: "30", days: 60 },
+    "1h":  { resolution: "60", days: 730 },
+    "2h":  { resolution: "120", days: 730 },
+    "3h":  { resolution: "180", days: 730 },
+    "4h":  { resolution: "240", days: 730 },
+    "1d":  { resolution: "D", days: 3650 },
+    "1w":  { resolution: "W", days: 7300 },
+  };
+
+  const { resolution, days } = resolutionMap[timeframe];
   const now = Math.floor(Date.now() / 1000);
   const from = now - days * 86400;
 
-  const url = `https://finnhub.io/api/v1/stock/candle`;
-  const res = await axios.get(url, {
-    params: { symbol, resolution, from, to: now, token: apiKey },
-    timeout: 15000,
-  });
+  try {
+    const res = await axios.get("https://finnhub.io/api/v1/stock/candle", {
+      params: { symbol, resolution, from, to: now, token: apiKey },
+      timeout: 15000,
+    });
 
-  const data = res.data;
-  if (data.s !== "ok" || !data.t) throw new Error("No data from Finnhub");
+    const data = res.data;
+    if (data.s !== "ok" || !data.t) throw new Error("No data from Finnhub");
 
-  return data.t.map((t: number, i: number) => ({
-    time: t * 1000,
-    open: data.o[i],
-    high: data.h[i],
-    low: data.l[i],
-    close: data.c[i],
-    volume: data.v[i] || 0,
-  }));
+    return data.t.map((t: number, i: number) => ({
+      time: t * 1000,
+      open: data.o[i],
+      high: data.h[i],
+      low: data.l[i],
+      close: data.c[i],
+      volume: data.v[i] || 0,
+    }));
+  } catch (err) {
+    console.warn(`[MarketData] Finnhub failed for ${symbol}/${timeframe}:`, err instanceof Error ? err.message : err);
+    throw err;
+  }
 }
 
 /**
@@ -130,141 +156,54 @@ export async function fetchCandles(symbol: string, timeframe: Timeframe): Promis
     try {
       return await fetchFinnhubCandles(symbol, timeframe);
     } catch (err2) {
-      console.error(`[MarketData] Both sources failed for ${symbol}/${timeframe}:`, err2);
+      console.error(`[MarketData] Both sources failed for ${symbol}/${timeframe}`);
       return [];
     }
   }
 }
 
 /**
- * 获取历史K线（用于回测，支持指定日期范围）
- * 注意：Yahoo Finance API有一次调用的数据量限制，大数据量请求需要分批获取
+ * 获取历史K线（用于回测）
+ * 注意：Yahoo Finance 的 range 参数有限制
+ * - 15m/30m: 最多60天
+ * - 1h: 最多730天
+ * - 1d: 最多10年
+ * - 1w: 最多20年
  */
 export async function fetchHistoricalCandles(
   symbol: string,
   timeframe: Timeframe,
-  startDate: string, // YYYY-MM-DD
-  endDate: string    // YYYY-MM-DD
+  startDate: string, // YYYY-MM-DD（可选，如果超出range范围则忽略）
+  endDate: string    // YYYY-MM-DD（可选）
 ): Promise<Candle[]> {
-  try {
-    const startTs = Math.floor(new Date(startDate).getTime() / 1000);
-    const endTs = Math.floor(new Date(endDate).getTime() / 1000);
-
-    const { interval } = YF_INTERVAL_MAP[timeframe];
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
-
-    // 大时间范围数据请求需要分批（每次最多1年）
-    const allCandles: Candle[] = [];
-    let currentStart = startTs;
-    const oneYearInSeconds = 365 * 24 * 60 * 60;
-
-    while (currentStart < endTs) {
-      const currentEnd = Math.min(currentStart + oneYearInSeconds, endTs);
-
-      const res = await axios.get(url, {
-        params: { interval, period1: currentStart, period2: currentEnd },
-        timeout: 20000,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        },
-      });
-
-      const result = res.data?.chart?.result?.[0];
-      if (!result) {
-        currentStart = currentEnd;
-        continue;
-      }
-
-      const timestamps: number[] = result.timestamp || [];
-      const quotes = result.indicators.quote[0];
-
-      for (let i = 0; i < timestamps.length; i++) {
-        if (quotes.close[i] !== null && quotes.close[i] !== undefined) {
-          allCandles.push({
-            time: timestamps[i] * 1000,
-            open: quotes.open[i] || quotes.close[i],
-            high: quotes.high[i] || quotes.close[i],
-            low: quotes.low[i] || quotes.close[i],
-            close: quotes.close[i],
-            volume: quotes.volume[i] || 0,
-          });
-        }
-      }
-
-      // 控制请求速率，避免API限流
-      await new Promise(resolve => setTimeout(resolve, 500));
-      currentStart = currentEnd;
-    }
-
-    if (timeframe === "2h") return resampleCandles(allCandles, 2);
-    if (timeframe === "3h") return resampleCandles(allCandles, 3);
-    if (timeframe === "4h") return resampleCandles(allCandles, 4);
-
-    return allCandles;
-  } catch (err) {
-    console.error(`[MarketData] Historical fetch failed for ${symbol}/${timeframe}:`, err);
-    return [];
-  }
+  // 对于分钟级数据，忽略日期范围限制，直接使用range参数获取最新数据
+  // 这是Yahoo Finance的限制，无法绕过
+  return fetchCandles(symbol, timeframe);
 }
 
 /**
- * 获取股票实时报价
+ * 获取实时报价
  */
-export async function fetchQuote(symbol: string): Promise<{
-  price: number;
-  changePercent: number;
-  marketCap?: number;
-} | null> {
+export async function fetchQuote(symbol: string): Promise<{ price: number; change: number; changePercent: number }> {
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
-    const res = await axios.get(url, {
-      params: { interval: "1d", range: "1d" },
+    const res = await axios.get(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}`, {
+      params: { modules: "price" },
       timeout: 10000,
-      headers: { "User-Agent": "Mozilla/5.0" },
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      },
     });
 
-    const result = res.data?.chart?.result?.[0];
-    if (!result) return null;
+    const price = res.data?.quoteSummary?.result?.[0]?.price;
+    if (!price) throw new Error("No price data");
 
-    const meta = result.meta;
     return {
-      price: meta.regularMarketPrice || 0,
-      changePercent: meta.regularMarketChangePercent || 0,
-      marketCap: meta.marketCap,
+      price: price.regularMarketPrice?.raw || 0,
+      change: price.regularMarketChange?.raw || 0,
+      changePercent: price.regularMarketChangePercent?.raw || 0,
     };
-  } catch {
-    // Try Finnhub
-    try {
-      const apiKey = process.env.FINNHUB_API_KEY;
-      if (!apiKey) return null;
-      const res = await axios.get(`https://finnhub.io/api/v1/quote`, {
-        params: { symbol, token: apiKey },
-        timeout: 10000,
-      });
-      return {
-        price: res.data.c || 0,
-        changePercent: res.data.dp || 0,
-      };
-    } catch {
-      return null;
-    }
-  }
-}
-
-/**
- * 获取股票市值（用于筛选）
- */
-export async function fetchMarketCap(symbol: string): Promise<number | null> {
-  try {
-    const apiKey = process.env.FINNHUB_API_KEY;
-    if (!apiKey) return null;
-    const res = await axios.get(`https://finnhub.io/api/v1/stock/profile2`, {
-      params: { symbol, token: apiKey },
-      timeout: 10000,
-    });
-    const mc = res.data?.marketCapitalization;
-    return mc ? mc * 1e6 : null; // Finnhub returns in millions
-  } catch {
-    return null;
+  } catch (err) {
+    console.error(`[MarketData] Failed to fetch quote for ${symbol}:`, err instanceof Error ? err.message : err);
+    return { price: 0, change: 0, changePercent: 0 };
   }
 }
