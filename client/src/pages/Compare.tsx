@@ -22,6 +22,7 @@ export default function Compare() {
   const { user } = useLocalAuth();
   const [, navigate] = useLocation();
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [strategyFilter, setStrategyFilter] = useState<"all" | "standard" | "aggressive">("all");
 
   const { data: sessionsData, isLoading } = trpc.backtest.getSessions.useQuery(undefined, {
     enabled: !!user,
@@ -32,7 +33,12 @@ export default function Compare() {
     { enabled: selectedIds.length >= 2 }
   );
 
-  const sessions = sessionsData?.sessions?.filter(s => s.status === "completed") || [];
+  const allCompletedSessions = sessionsData?.sessions?.filter(s => s.status === "completed") || [];
+  const sessions = allCompletedSessions.filter(s => {
+    if (strategyFilter === "all") return true;
+    const strategy = (s as any).strategy || "standard";
+    return strategy === strategyFilter;
+  });
 
   const toggleSelect = (id: number) => {
     if (selectedIds.includes(id)) {
@@ -100,10 +106,36 @@ export default function Compare() {
           <Card className="bg-card border-border mb-6">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">
-                选择要对比的存档
-                <span className="text-muted-foreground font-normal ml-2">
-                  已选 {selectedIds.length}/6
-                </span>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span>
+                    选择要对比的存档
+                    <span className="text-muted-foreground font-normal ml-2">已选 {selectedIds.length}/6</span>
+                  </span>
+                  {/* 策略过滤器 */}
+                  <div className="flex items-center gap-1 text-xs">
+                    <span className="text-muted-foreground mr-1">策略：</span>
+                    {(["all", "standard", "aggressive"] as const).map(f => (
+                      <button
+                        key={f}
+                        onClick={() => {
+                          setStrategyFilter(f);
+                          setSelectedIds([]); // 切换过滤器时清空选择
+                        }}
+                        className={`px-2 py-0.5 rounded border transition-all ${
+                          strategyFilter === f
+                            ? f === "aggressive"
+                              ? "bg-orange-500/20 border-orange-500/40 text-orange-400"
+                              : f === "standard"
+                              ? "bg-blue-500/20 border-blue-500/40 text-blue-400"
+                              : "bg-primary/20 border-primary/40 text-primary"
+                            : "border-border text-muted-foreground hover:border-primary/30"
+                        }`}
+                      >
+                        {f === "all" ? "全部" : f === "standard" ? "📊 标准" : "⚡ 激进"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -129,7 +161,14 @@ export default function Compare() {
                         {isSelected && <CheckSquare size={12} className="text-primary-foreground" />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-foreground truncate">{session.name}</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-sm font-medium text-foreground truncate">{session.name}</p>
+                          {(session as any).strategy === "aggressive" ? (
+                            <span className="shrink-0 text-xs px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 border border-orange-500/20">⚡</span>
+                          ) : (
+                            <span className="shrink-0 text-xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">📊</span>
+                          )}
+                        </div>
                         <p className="text-xs text-muted-foreground">
                           {session.startDate} → {session.endDate}
                         </p>
@@ -301,6 +340,11 @@ export default function Compare() {
                           {
                             label: "K线范围",
                             getValue: (s: any) => `${s.cdLookbackBars}根`,
+                          },
+                          {
+                            label: "回测策略",
+                            getValue: (s: any) => (s as any).strategy === "aggressive" ? "⚡ 激进" : "📊 标准",
+                            getClass: (s: any) => (s as any).strategy === "aggressive" ? "text-orange-400" : "text-blue-400",
                           },
                         ].map(row => (
                           <tr key={row.label} className="hover:bg-muted/20">

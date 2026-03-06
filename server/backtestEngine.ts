@@ -50,6 +50,9 @@ interface Position {
   secondBuyDone: boolean;
   dailySellTriggered: boolean;
   dailySellDate: string | null;
+  // 激进策略加仓状态
+  aggressiveAddDone: boolean;     // 是否已完成蓝梯突破黄梯加仓
+  aggressiveRetestAddDone: boolean; // 是否已完成回撞黄梯加仓
 }
 
 // ============ 回测状态 ============
@@ -309,19 +312,27 @@ async function backtestSymbol(
           secondBuyDone: buySig.type === "second_buy",
           dailySellTriggered: false,
           dailySellDate: null,
+          aggressiveAddDone: buySig.type === "aggressive_add_position",
+          aggressiveRetestAddDone: buySig.type === "aggressive_retest_add",
         });
       }
     } else if (state.positions.has(symbol)) {
       // 已有第一买点，检查第二买点
       const pos = state.positions.get(symbol)!;
-      if (pos.firstBuyDone && !pos.secondBuyDone) {
-        const dailyC = candlesUpTo["1d"] || [];
-        const lowestCandles = candlesUpTo[pos.entryTimeframe] || [];
-        if (lowestCandles.length >= 90) {
-          const ladder = calculateLadder(lowestCandles);
-          const sig = getLadderSignal(lowestCandles, ladder);
-          if (sig.blueDnAboveYellowUp) {
-            const buyAmount = state.balance * 0.1; // 10%总仓位
+
+      if (config.strategy === "aggressive") {
+        // ============ 激进策略加仓逻辑 ============
+        const aggressiveLadderTf2 = config.ladderBreakTimeframes.length > 0
+          ? config.ladderBreakTimeframes[0] as Timeframe
+          : "30m" as Timeframe;
+        const aggCandles = candlesUpTo[aggressiveLadderTf2] || [];
+        if (aggCandles.length >= 90) {
+          const aggLadder = calculateLadder(aggCandles);
+          const aggSig = getLadderSignal(aggCandles, aggLadder);
+
+          // 加仓点1：蓝梯突破黄梯上边缘（未加仓过）
+          if (aggSig.blueCrossYellowUp && !pos.aggressiveAddDone) {
+            const buyAmount = Math.min(state.balance * 0.1, state.balance * 0.2);
             if (buyAmount >= 100) {
               const qty = buyAmount / closePrice;
               const newTotalQty = pos.quantity + qty;
@@ -335,9 +346,9 @@ async function backtestSymbol(
                 price: String(closePrice.toFixed(4)),
                 amount: String(buyAmount.toFixed(2)),
                 tradeDate: date,
-                signalTimeframe: pos.entryTimeframe,
-                signalType: "second_buy",
-                reason: `${pos.entryTimeframe}级别蓝梯下边缘高于黄梯上边缘，触发第二买点（50%仓位）`,
+                signalTimeframe: aggressiveLadderTf2,
+                signalType: "aggressive_add_position",
+                reason: `${aggressiveLadderTf2}级别蓝梯上边缘突破黄梯上边缘，激进加仓（50%仓位）`,
                 pnl: null,
                 pnlPercent: null,
               });
@@ -345,7 +356,82 @@ async function backtestSymbol(
               state.balance -= buyAmount;
               pos.quantity = newTotalQty;
               pos.avgCost = newAvgCost;
-              pos.secondBuyDone = true;
+              pos.aggressiveAddDone = true;
+            }
+          }
+
+          // 加仓点2：蓝梯回撞黄梯（蓝梯在黄梯上方但接近黄梯上边缘）+ CD信号（未加仓过）
+          if (aggSig.blueRetestYellow && aggSig.blueAboveYellow && !pos.aggressiveRetestAddDone) {
+            // 检查是否有CD信号
+            const hasCd = config.cdSignalTimeframes.some(tf => {
+              const c = candlesUpTo[tf];
+              return c && hasCDSignalInRange(c, config.cdLookbackBars);
+            });
+
+            if (hasCd) {
+              const buyAmount = Math.min(state.balance * 0.1, state.balance * 0.2);
+              if (buyAmount >= 100) {
+                const qty = buyAmount / closePrice;
+                const newTotalQty = pos.quantity + qty;
+                const newAvgCost = (pos.quantity * pos.avgCost + qty * closePrice) / newTotalQty;
+
+                state.trades.push({
+                  sessionId: config.sessionId,
+                  symbol,
+                  type: "buy",
+                  quantity: String(qty.toFixed(6)),
+                  price: String(closePrice.toFixed(4)),
+                  amount: String(buyAmount.toFixed(2)),
+                  tradeDate: date,
+                  signalTimeframe: aggressiveLadderTf2,
+                  signalType: "aggressive_retest_add",
+                  reason: `${aggressiveLadderTf2}级别蓝梯回撞黄梯（蓝梯在黄梯上方但未破黄梯下边缘）+ CD担底信号，绝佳加仓点（50%仓位）`,
+                  pnl: null,
+                  pnlPercent: null,
+                });
+
+                state.balance -= buyAmount;
+                pos.quantity = newTotalQty;
+                pos.avgCost = newAvgCost;
+                pos.aggressiveRetestAddDone = true;
+              }
+            }
+          }
+        }
+      } else {
+        // ============ 标准策略第二买点 ============
+        if (pos.firstBuyDone && !pos.secondBuyDone) {
+          const lowestCandles = candlesUpTo[pos.entryTimeframe] || [];
+          if (lowestCandles.length >= 90) {
+            const ladder = calculateLadder(lowestCandles);
+            const sig = getLadderSignal(lowestCandles, ladder);
+            if (sig.blueDnAboveYellowUp) {
+              const buyAmount = state.balance * 0.1; // 10%总仓位
+              if (buyAmount >= 100) {
+                const qty = buyAmount / closePrice;
+                const newTotalQty = pos.quantity + qty;
+                const newAvgCost = (pos.quantity * pos.avgCost + qty * closePrice) / newTotalQty;
+
+                state.trades.push({
+                  sessionId: config.sessionId,
+                  symbol,
+                  type: "buy",
+                  quantity: String(qty.toFixed(6)),
+                  price: String(closePrice.toFixed(4)),
+                  amount: String(buyAmount.toFixed(2)),
+                  tradeDate: date,
+                  signalTimeframe: pos.entryTimeframe,
+                  signalType: "second_buy",
+                  reason: `${pos.entryTimeframe}级别蓝梯下边缘高于黄梯上边缘，触发第二买点（50%仓位）`,
+                  pnl: null,
+                  pnlPercent: null,
+                });
+
+                state.balance -= buyAmount;
+                pos.quantity = newTotalQty;
+                pos.avgCost = newAvgCost;
+                pos.secondBuyDone = true;
+              }
             }
           }
         }

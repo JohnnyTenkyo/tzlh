@@ -126,8 +126,14 @@ const SIGNAL_TYPE_LABELS: Record<string, string> = {
   second_buy: "第二买点（蓝梯下边缘>黄梯上边缘）",
   first_sell: "第一卖点（上级别跌破蓝梯下边缘）",
   second_sell: "第二卖点（蓝梯上边缘<黄梯下边缘）",
-  daily_sell_half: "日线CD卖出信号（卖50%）",
+  daily_sell_half: "日线CD卖出信号（卖 50%）",
   daily_sell_all: "日线CD卖出后次日清仓",
+  // 激进策略信号
+  aggressive_first_buy: "激进第一买点（收盘站上蓝梯）",
+  aggressive_add_position: "激进加仓（蓝梯突破黄梯）",
+  aggressive_retest_add: "激进加仓（蓝梯回撞黄梯+CD信号）",
+  aggressive_stop_loss: "激进止损（跌破蓝梯下边缘）",
+  aggressive_trend_exit: "激进退出（趋势反转）",
 };
 
 export default function BacktestDetail() {
@@ -229,9 +235,19 @@ export default function BacktestDetail() {
           >
             <ArrowLeft size={14} /> 返回
           </Button>
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
+            <div className="flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-bold text-foreground">{session.name}</h1>
+              {/* 策略类型徽章 */}
+              {(session as any).strategy === "aggressive" ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-orange-500/15 text-orange-400 border border-orange-500/25">
+                  ⚡ 激进策略
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-500/15 text-blue-400 border border-blue-500/25">
+                  📊 标准策略
+                </span>
+              )}
               {session.status === "running" && (
                 <Badge className="bg-blue-500/20 text-blue-400 gap-1">
                   <Loader2 size={10} className="animate-spin" /> 运行中 {session.progress}%
@@ -519,12 +535,22 @@ export default function BacktestDetail() {
                       ${parseFloat(String(session.initialBalance)).toLocaleString()}
                     </p>
                   </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">市值筛选</p>
-                    <p className="text-foreground font-medium">
-                      {MARKET_CAP_LABELS[session.marketCapFilter as keyof typeof MARKET_CAP_LABELS] || session.marketCapFilter}
-                    </p>
-                  </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">市値筛选</p>
+                  <p className="text-foreground font-medium">
+                    {MARKET_CAP_LABELS[session.marketCapFilter as keyof typeof MARKET_CAP_LABELS] || session.marketCapFilter}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">回测策略</p>
+                  <p className="text-foreground font-medium">
+                    {(session as any).strategy === "aggressive" ? (
+                      <span className="text-orange-400">⚡ 激进策略（CD信号后收盘站上蓝梯即买入）</span>
+                    ) : (
+                      <span className="text-blue-400">📊 标准策略（蓝梯突破黄梯后买入）</span>
+                    )}
+                  </p>
+                </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">回测区间</p>
                     <p className="text-foreground font-medium">{session.startDate} → {session.endDate}</p>
