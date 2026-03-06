@@ -1,0 +1,1 @@
+ALTER TABLE `backtest_sessions` ADD `customStocks` text;

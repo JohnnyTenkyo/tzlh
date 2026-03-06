@@ -90,6 +90,9 @@ export const backtestSessions = mysqlTable("backtest_sessions", {
   // Ladder breakout config (JSON array of timeframes)
   ladderBreakTimeframes: text("ladderBreakTimeframes").notNull(), // JSON: ["30m"]
 
+  // Custom stocks (JSON array of symbols, null = use full pool)
+  customStocks: text("customStocks"), // JSON: ["NVDA","AAPL"] or null
+
   // Results
   finalBalance: decimal("finalBalance", { precision: 16, scale: 2 }),
   totalReturn: decimal("totalReturn", { precision: 10, scale: 4 }), // percent

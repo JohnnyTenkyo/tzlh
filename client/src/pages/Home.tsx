@@ -47,11 +47,18 @@ interface RecommendationItem {
   details: Record<string, number>;
 }
 
+const TIMEFRAME_OPTIONS = [
+  { value: "1d", label: "日线" },
+  { value: "4h", label: "4H" },
+  { value: "1h", label: "1H" },
+  { value: "30m", label: "30M" },
+];
+
 function RecommendationCard({ item, rank }: { item: RecommendationItem; rank: number }) {
   const [showChart, setShowChart] = useState(false);
   const [chartReady, setChartReady] = useState(false);
+  const [chartTimeframe, setChartTimeframe] = useState("1d");
 
-  // 延迟渲染图表，确保容器展开动画完成后再初始化
   const handleToggleChart = () => {
     if (!showChart) {
       setShowChart(true);
@@ -60,6 +67,12 @@ function RecommendationCard({ item, rank }: { item: RecommendationItem; rank: nu
       setShowChart(false);
       setChartReady(false);
     }
+  };
+
+  const handleTimeframeChange = (tf: string) => {
+    setChartTimeframe(tf);
+    setChartReady(false);
+    setTimeout(() => setChartReady(true), 50);
   };
 
   return (
@@ -109,10 +122,27 @@ function RecommendationCard({ item, rank }: { item: RecommendationItem; rank: nu
         <p className="text-xs text-muted-foreground mt-3 leading-relaxed">{item.reason}</p>
         {showChart && (
           <div className="mt-4">
+            {/* 时间周期切换按鈕 */}
+            <div className="flex items-center gap-1 mb-2">
+              <span className="text-xs text-muted-foreground mr-1">周期：</span>
+              {TIMEFRAME_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => handleTimeframeChange(opt.value)}
+                  className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                    chartTimeframe === opt.value
+                      ? "bg-primary text-primary-foreground font-medium"
+                      : "bg-muted text-muted-foreground hover:bg-muted/80"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
             {chartReady ? (
               <StockChart
                 symbol={item.symbol}
-                timeframe="1d"
+                timeframe={chartTimeframe}
                 height={320}
                 showLadder={true}
               />
@@ -125,7 +155,7 @@ function RecommendationCard({ item, rank }: { item: RecommendationItem; rank: nu
               </div>
             )}
             <p className="text-xs text-muted-foreground mt-1 text-center">
-              蓝线 = 蓝色梯子 | 黄线 = 黄色梯子（日线）
+              蓝线 = 蓝色梯子 | 黄线 = 黄色梯子
             </p>
           </div>
         )}

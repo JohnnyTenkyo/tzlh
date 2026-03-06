@@ -33,6 +33,7 @@ export interface BacktestConfig {
   cdSignalTimeframes: Timeframe[];
   cdLookbackBars: number;
   ladderBreakTimeframes: Timeframe[];
+  customStocks?: string[]; // 自选股票列表，为空时使用全部股票池
 }
 
 // ============ 持仓状态 ============
@@ -361,8 +362,15 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
     if (dates.length === 0) throw new Error("日期范围无效");
 
     // 确定要回测的股票列表
-    let stocksToTest = US_STOCKS.filter(s => !["QQQ", "SPY", "TQQQ", "SOXL", "ARKK"].includes(s.symbol)).map(s => s.symbol);
-    stocksToTest = stocksToTest.slice(0, 30); // 限制30只以控制时间
+    let stocksToTest: string[];
+    if (config.customStocks && config.customStocks.length > 0) {
+      // 自选股票模式：使用用户指定的股票，不限制数量
+      stocksToTest = config.customStocks.map(s => s.toUpperCase().trim()).filter(Boolean);
+    } else {
+      // 全部股票池模式：按市値筛选，限制30只以控制时间
+      stocksToTest = US_STOCKS.filter(s => !["QQQ", "SPY", "TQQQ", "SOXL", "ARKK"].includes(s.symbol)).map(s => s.symbol);
+      stocksToTest = stocksToTest.slice(0, 30);
+    }
 
     const state: BacktestState = {
       balance: config.initialBalance,
@@ -381,10 +389,15 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
       "1d" as Timeframe,
     ]));
 
+    // 计算指标预热日期（往前多取180天用于EMA/MACD预热）
+    const warmupStart = new Date(config.startDate);
+    warmupStart.setDate(warmupStart.getDate() - 180);
+    const dataStartDate = warmupStart.toISOString().split("T")[0];
+
     // 获取基准数据（QQQ/SPY）
     const [qqqCandles, spyCandles] = await Promise.all([
-      fetchHistoricalCandles("QQQ", "1d", config.startDate, config.endDate),
-      fetchHistoricalCandles("SPY", "1d", config.startDate, config.endDate),
+      fetchHistoricalCandles("QQQ", "1d", dataStartDate, config.endDate),
+      fetchHistoricalCandles("SPY", "1d", dataStartDate, config.endDate),
     ]);
 
     const qqqStart = getClosePriceOnDate(qqqCandles, dates[0]);
@@ -396,10 +409,10 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
     for (let si = 0; si < stocksToTest.length; si++) {
       const symbol: string = stocksToTest[si]!;
 
-      // 获取该股票所有时间级别的历史数据
+      // 获取该股票所有时间级别的历史数据（包含预热期）
       const allCandlesByTf: Partial<Record<Timeframe, Candle[]>> = {};
       for (const tf of allTf) {
-        const c = await fetchHistoricalCandles(symbol, tf, config.startDate, config.endDate);
+        const c = await fetchHistoricalCandles(symbol, tf, dataStartDate, config.endDate);
         if (c.length > 0) allCandlesByTf[tf] = c;
       }
 

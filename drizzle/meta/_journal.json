@@ -15,6 +15,13 @@
       "when": 1772788938693,
       "tag": "0001_noisy_dark_beast",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1772792558391,
+      "tag": "0002_past_starhawk",
+      "breakpoints": true
     }
   ]
 }

@@ -173,6 +173,7 @@ export const appRouter = router({
         cdSignalTimeframes: z.array(z.string()).min(1),
         cdLookbackBars: z.number().min(1).max(30),
         ladderBreakTimeframes: z.array(z.string()).min(1),
+        customStocks: z.array(z.string()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const localUser = getLocalUser(ctx);
@@ -180,6 +181,10 @@ export const appRouter = router({
 
         const db = await getDb();
         if (!db) return { success: false, error: "数据库不可用" };
+
+        const cleanCustomStocks = input.customStocks && input.customStocks.length > 0
+          ? input.customStocks.map(s => s.toUpperCase().trim()).filter(Boolean)
+          : null;
 
         const result = await db.insert(backtestSessions).values({
           localUserId: localUser.userId,
@@ -191,6 +196,7 @@ export const appRouter = router({
           cdSignalTimeframes: JSON.stringify(input.cdSignalTimeframes),
           cdLookbackBars: input.cdLookbackBars,
           ladderBreakTimeframes: JSON.stringify(input.ladderBreakTimeframes),
+          customStocks: cleanCustomStocks ? JSON.stringify(cleanCustomStocks) : null,
           status: "pending",
         });
 
@@ -207,6 +213,7 @@ export const appRouter = router({
             cdSignalTimeframes: input.cdSignalTimeframes as Timeframe[],
             cdLookbackBars: input.cdLookbackBars,
             ladderBreakTimeframes: input.ladderBreakTimeframes as Timeframe[],
+            customStocks: cleanCustomStocks || undefined,
           }).catch(err => console.error("[Backtest] Error:", err));
         }, 100);
 

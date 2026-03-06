@@ -7,7 +7,8 @@
  * （实际上美股开盘为 9:30 ET，这里提前30分钟扫描）
  */
 import cron from "node-cron";
-import { runDailyScan, getScanStatus } from "./screener";
+import { runDailyScan, getScanStatus, getTodayRecommendations } from "./screener";
+import { notifyOwner } from "./_core/notification";
 
 let schedulerStarted = false;
 
@@ -63,10 +64,36 @@ async function triggerScan(type: "morning" | "midday") {
     return;
   }
 
+  const scanLabel = type === "morning" ? "早盘" : "午盘";
   console.log(`[Scheduler] Starting ${type} scan...`);
   try {
-    await runDailyScan();
+    const scanResults = await runDailyScan(true);
     console.log(`[Scheduler] ${type} scan completed successfully`);
+
+    // 获取扫描结果并推送通知
+    const results = scanResults || [];
+    const validResults = results.filter((r: any) => r.totalScore > 0);
+    const topStock = validResults.length > 0 ? validResults[0] : null;
+
+    const title = `量化回测系统 - ${scanLabel}扫描完成`;
+    let content = `时间：${new Date().toLocaleString("zh-CN", { timeZone: "America/New_York" })} (美东)
+`;
+    content += `扫描股票数：${results.length} 只
+`;
+    content += `有效信号：${validResults.length} 只
+`;
+    if (topStock) {
+      content += `最高分：${topStock.symbol} (${topStock.totalScore}分) - ${topStock.matchLevel || ""}
+`;
+      content += `推荐理由：${topStock.reason || ""}
+`;
+    }
+    if (validResults.length > 1) {
+      content += `其他推荐：${validResults.slice(1, 5).map((r: any) => `${r.symbol}(${r.totalScore}分)`).join(", ")}`;
+    }
+
+    await notifyOwner({ title, content });
+    console.log(`[Scheduler] Notification sent: ${validResults.length} valid signals found`);
   } catch (err) {
     console.error(`[Scheduler] ${type} scan failed:`, err);
   }

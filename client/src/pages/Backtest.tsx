@@ -81,6 +81,17 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
   const [cdTimeframes, setCdTimeframes] = useState<string[]>(["4h", "1h"]);
   const [cdLookback, setCdLookback] = useState(5);
   const [ladderTimeframes, setLadderTimeframes] = useState<string[]>(["30m"]);
+  // 自选股票
+  const [useCustomStocks, setUseCustomStocks] = useState(false);
+  const [customStocksInput, setCustomStocksInput] = useState("");
+  const [customStocksList, setCustomStocksList] = useState<string[]>([]);
+
+  const handleAddCustomStock = () => {
+    const symbols = customStocksInput.toUpperCase().split(/[,\s]+/).map((s: string) => s.trim()).filter((s: string) => /^[A-Z]{1,5}$/.test(s));
+    const newList = Array.from(new Set([...customStocksList, ...symbols]));
+    setCustomStocksList(newList);
+    setCustomStocksInput("");
+  };
 
   const createMutation = trpc.backtest.createSession.useMutation({
     onSuccess: (data) => {
@@ -98,6 +109,7 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
     if (!name.trim()) { toast.error("请填写存档名称"); return; }
     if (cdTimeframes.length === 0) { toast.error("请选择CD信号级别"); return; }
     if (ladderTimeframes.length === 0) { toast.error("请选择蓝梯突破级别"); return; }
+    if (useCustomStocks && customStocksList.length === 0) { toast.error("请添加至少一只自选股票"); return; }
 
     createMutation.mutate({
       name: name.trim(),
@@ -108,6 +120,7 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
       cdSignalTimeframes: cdTimeframes,
       cdLookbackBars: cdLookback,
       ladderBreakTimeframes: ladderTimeframes,
+      customStocks: useCustomStocks ? customStocksList : undefined,
     });
   };
 
@@ -243,6 +256,74 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
               <p>• 第二卖点：当前级别蓝梯上边缘低于黄梯下边缘 → 卖出余下50%</p>
               <p>• 日线CD卖出 + 收盘跌破蓝梯下边缘 → 分批卖出</p>
             </div>
+          </div>
+
+          {/* 自选股票 */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between border-b border-border pb-1">
+              <h3 className="text-sm font-semibold text-foreground">自选股票（可选）</h3>
+              <button
+                type="button"
+                onClick={() => setUseCustomStocks(!useCustomStocks)}
+                className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded border transition-all ${
+                  useCustomStocks
+                    ? "bg-primary/20 border-primary text-primary"
+                    : "bg-muted border-border text-muted-foreground hover:border-primary/50"
+                }`}
+              >
+                {useCustomStocks ? <CheckSquare size={12} /> : <Square size={12} />}
+                {useCustomStocks ? "已开启自选模式" : "开启自选模式"}
+              </button>
+            </div>
+            {useCustomStocks && (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">开启后仅回测自选股票，市値筛选失效。支持手动输入股票代码（多个用逗号或空格分隔）。</p>
+                <div className="flex gap-2">
+                  <Input
+                    value={customStocksInput}
+                    onChange={e => setCustomStocksInput(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && handleAddCustomStock()}
+                    placeholder="如：NVDA, AAPL, TSLA"
+                    className="bg-input border-border text-sm flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddCustomStock}
+                    className="shrink-0"
+                  >
+                    添加
+                  </Button>
+                </div>
+                {customStocksList.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {customStocksList.map(sym => (
+                      <span
+                        key={sym}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-primary/20 border border-primary/30 text-primary text-xs"
+                      >
+                        {sym}
+                        <button
+                          type="button"
+                          onClick={() => setCustomStocksList(customStocksList.filter(s => s !== sym))}
+                          className="hover:text-red-400 transition-colors"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setCustomStocksList([])}
+                      className="text-xs text-muted-foreground hover:text-red-400 transition-colors px-1"
+                    >
+                      清空
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <Button
