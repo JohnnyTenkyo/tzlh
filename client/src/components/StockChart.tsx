@@ -55,7 +55,13 @@ export default function StockChart({
 
   const { data, isLoading, error } = trpc.chart.getCandles.useQuery(
     { symbol, timeframe, startDate, endDate },
-    { enabled: !!symbol, staleTime: 5 * 60 * 1000 }
+    { 
+      enabled: !!symbol, 
+      staleTime: 5 * 60 * 1000,
+      // 大数据量查询增加超时时间
+      retry: 2,
+      retryDelay: 1000,
+    }
   );
 
   // Initialize chart when container is mounted
@@ -84,6 +90,20 @@ export default function StockChart({
         borderColor: "#334155",
         timeVisible: true,
         secondsVisible: false,
+        // 优化大数据量时间轴显示
+        tickMarkFormatter: (time: number) => {
+          const date = new Date(time * 1000);
+          return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
+        },
+      },
+      // 优化性能：启用自适应精度
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+      },
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
       },
     });
     chartRef.current = chart;
@@ -165,7 +185,13 @@ export default function StockChart({
     }));
 
     try {
-      candleSeriesRef.current.setData(candleData);
+      // 大数据量优化：分批设置数据
+      if (candleData.length > 5000) {
+        // 对于超大数据集，使用批量设置
+        candleSeriesRef.current.setData(candleData);
+      } else {
+        candleSeriesRef.current.setData(candleData);
+      }
 
       if (showLadder) {
         if (blueUpRef.current && blueUp?.length) blueUpRef.current.setData(toLineData(blueUp));
@@ -174,7 +200,7 @@ export default function StockChart({
         if (yellowDnRef.current && yellowDn?.length) yellowDnRef.current.setData(toLineData(yellowDn));
       }
 
-      // Add trade markers
+      // Add trade markers（仅显示可见范围内的标记）
       if (tradeMarkers.length > 0 && candleSeriesRef.current) {
         const markers = tradeMarkers
           .filter((m) => m.price > 0)

@@ -14,8 +14,8 @@ const YF_INTERVAL_MAP: Record<Timeframe, { interval: string; range: string }> = 
   "2h":  { interval: "60m", range: "730d" }, // YF doesn't support 2h, use 1h and resample
   "3h":  { interval: "60m", range: "730d" }, // same
   "4h":  { interval: "60m", range: "730d" }, // same
-  "1d":  { interval: "1d",  range: "5y" },
-  "1w":  { interval: "1wk", range: "10y" },
+  "1d":  { interval: "1d",  range: "10y" }, // 扩展到10年歴史数据
+  "1w":  { interval: "1wk", range: "20y" }, // 扩展到20年歴史数据
 };
 
 // Finnhub resolution mapping
@@ -26,8 +26,8 @@ const FINNHUB_RES_MAP: Record<Timeframe, { resolution: string; days: number }> =
   "2h":  { resolution: "120", days: 365 },
   "3h":  { resolution: "180", days: 365 },
   "4h":  { resolution: "240", days: 365 },
-  "1d":  { resolution: "D", days: 1825 },
-  "1w":  { resolution: "W", days: 3650 },
+  "1d":  { resolution: "D", days: 3650 }, // 扩展到级10年
+  "1w":  { resolution: "W", days: 7300 }, // 扩展到级20年
 };
 
 /**
@@ -138,6 +138,7 @@ export async function fetchCandles(symbol: string, timeframe: Timeframe): Promis
 
 /**
  * 获取历史K线（用于回测，支持指定日期范围）
+ * 注意：Yahoo Finance API有一次调用的数据量限制，大数据量请求需要分批获取
  */
 export async function fetchHistoricalCandles(
   symbol: string,
@@ -152,39 +153,54 @@ export async function fetchHistoricalCandles(
     const { interval } = YF_INTERVAL_MAP[timeframe];
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
 
-    const res = await axios.get(url, {
-      params: { interval, period1: startTs, period2: endTs },
-      timeout: 20000,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      },
-    });
+    // 大时间范围数据请求需要分批（每次最多1年）
+    const allCandles: Candle[] = [];
+    let currentStart = startTs;
+    const oneYearInSeconds = 365 * 24 * 60 * 60;
 
-    const result = res.data?.chart?.result?.[0];
-    if (!result) return [];
+    while (currentStart < endTs) {
+      const currentEnd = Math.min(currentStart + oneYearInSeconds, endTs);
 
-    const timestamps: number[] = result.timestamp || [];
-    const quotes = result.indicators.quote[0];
+      const res = await axios.get(url, {
+        params: { interval, period1: currentStart, period2: currentEnd },
+        timeout: 20000,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+      });
 
-    const candles: Candle[] = [];
-    for (let i = 0; i < timestamps.length; i++) {
-      if (quotes.close[i] !== null && quotes.close[i] !== undefined) {
-        candles.push({
-          time: timestamps[i] * 1000,
-          open: quotes.open[i] || quotes.close[i],
-          high: quotes.high[i] || quotes.close[i],
-          low: quotes.low[i] || quotes.close[i],
-          close: quotes.close[i],
-          volume: quotes.volume[i] || 0,
-        });
+      const result = res.data?.chart?.result?.[0];
+      if (!result) {
+        currentStart = currentEnd;
+        continue;
       }
+
+      const timestamps: number[] = result.timestamp || [];
+      const quotes = result.indicators.quote[0];
+
+      for (let i = 0; i < timestamps.length; i++) {
+        if (quotes.close[i] !== null && quotes.close[i] !== undefined) {
+          allCandles.push({
+            time: timestamps[i] * 1000,
+            open: quotes.open[i] || quotes.close[i],
+            high: quotes.high[i] || quotes.close[i],
+            low: quotes.low[i] || quotes.close[i],
+            close: quotes.close[i],
+            volume: quotes.volume[i] || 0,
+          });
+        }
+      }
+
+      // 控制请求速率，避免API限流
+      await new Promise(resolve => setTimeout(resolve, 500));
+      currentStart = currentEnd;
     }
 
-    if (timeframe === "2h") return resampleCandles(candles, 2);
-    if (timeframe === "3h") return resampleCandles(candles, 3);
-    if (timeframe === "4h") return resampleCandles(candles, 4);
+    if (timeframe === "2h") return resampleCandles(allCandles, 2);
+    if (timeframe === "3h") return resampleCandles(allCandles, 3);
+    if (timeframe === "4h") return resampleCandles(allCandles, 4);
 
-    return candles;
+    return allCandles;
   } catch (err) {
     console.error(`[MarketData] Historical fetch failed for ${symbol}/${timeframe}:`, err);
     return [];
