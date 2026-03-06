@@ -312,3 +312,65 @@ describe("认证逻辑验证", () => {
     expect(validPassword.length).toBeGreaterThanOrEqual(4);
   });
 });
+
+describe("激进策略信号检测", () => {
+  it("detectAggressiveBuySignal应返回正确的接口字段", async () => {
+    const { detectAggressiveBuySignal } = await import("./indicators");
+    const candles = generateCandles(200, 100, "up");
+    const tfCandles: TimeframeCandles = {
+      "4h": candles,
+      "1h": candles,
+      "30m": candles,
+    };
+    // 在上涨趋势中可能有激进买入信号
+    const sig = detectAggressiveBuySignal(tfCandles, ["4h", "1h"], "30m", 10, 100);
+    if (sig) {
+      expect(sig).toHaveProperty("type");
+      expect(sig).toHaveProperty("timeframe");
+      expect(sig).toHaveProperty("cdTimeframe");
+      expect(sig).toHaveProperty("reason");
+      expect(["aggressive_first_buy", "aggressive_add_position", "aggressive_retest_add"]).toContain(sig.type);
+    }
+    // sig可能为null（无信号），这是正常情况
+    expect(sig === null || typeof sig === "object").toBe(true);
+  });
+
+  it("detectAggressiveSellSignal应返回正确的接口字段", async () => {
+    const { detectAggressiveSellSignal } = await import("./indicators");
+    const candles = generateCandles(200, 100, "down");
+    const tfCandles: TimeframeCandles = {
+      "30m": candles,
+    };
+    const sig = detectAggressiveSellSignal(tfCandles, "30m", 90, false);
+    if (sig) {
+      expect(sig).toHaveProperty("type");
+      expect(sig).toHaveProperty("timeframe");
+      expect(sig).toHaveProperty("reason");
+      expect(["aggressive_stop_loss", "aggressive_trend_exit", "aggressive_hold_exit"]).toContain(sig.type);
+    }
+    expect(sig === null || typeof sig === "object").toBe(true);
+  });
+
+  it("calculateAggressiveScore应返回包含激进信号字段的评分", async () => {
+    const { calculateAggressiveScore } = await import("./indicators");
+    const candles = generateCandles(200, 100, "up");
+    const tfCandles: TimeframeCandles = {
+      "4h": candles,
+      "3h": candles,
+      "2h": candles,
+      "1h": candles,
+      "30m": candles,
+    };
+    const score = calculateAggressiveScore("AAPL", tfCandles, 5);
+    expect(score).toHaveProperty("symbol");
+    expect(score).toHaveProperty("totalScore");
+    expect(score).toHaveProperty("aggressiveSignal");
+    expect(score).toHaveProperty("aggressiveType");
+    expect(score).toHaveProperty("aggressiveReason");
+    expect(typeof score.aggressiveSignal).toBe("boolean");
+    expect(typeof score.aggressiveType).toBe("string");
+    expect(typeof score.aggressiveReason).toBe("string");
+    expect(score.totalScore).toBeGreaterThanOrEqual(0);
+    expect(score.totalScore).toBeLessThanOrEqual(100);
+  });
+});

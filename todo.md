@@ -83,3 +83,13 @@
 - [ ] 重写backtestEngine.ts：按新买卖规则执行回测，确保有买卖记录
 - [ ] 前端Backtest.tsx：添加自选股票输入UI（手动输入+从推荐列表选择）
 - [ ] 实现推送通知（定时扫描完成后推送摘要）
+
+## 第五轮优化（激进策略）
+- [x] indicators.ts：添加激进买入信号检测（CD信号出现后30m收盘价站上蓝梯即买入）
+- [x] indicators.ts：激进策略加仓点（蓝梯回撞黄梯但未破黄梯下边缘+CD信号=绝佳加仓）
+- [x] backtestEngine.ts：添加激进策略回测逻辑（独立买卖规则）
+- [x] screener.ts：首页扫描添加激进策略评分
+- [x] 前端Backtest.tsx：回测创建对话框添加策略选择（标准/激进）
+- [x] 前端Home.tsx：首页推荐卡片显示激进策略信号标签
+- [x] drizzle/schema.ts：回测存档表添加strategy字段
+- [x] routers.ts：回测创建接口支持strategy参数

@@ -1,0 +1,1 @@
+ALTER TABLE `backtest_sessions` ADD `strategy` enum('standard','aggressive') DEFAULT 'standard' NOT NULL;

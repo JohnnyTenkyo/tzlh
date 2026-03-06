@@ -174,6 +174,7 @@ export const appRouter = router({
         cdLookbackBars: z.number().min(1).max(30),
         ladderBreakTimeframes: z.array(z.string()).min(1),
         customStocks: z.array(z.string()).optional(),
+        strategy: z.enum(["standard", "aggressive"]).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const localUser = getLocalUser(ctx);
@@ -197,6 +198,7 @@ export const appRouter = router({
           cdLookbackBars: input.cdLookbackBars,
           ladderBreakTimeframes: JSON.stringify(input.ladderBreakTimeframes),
           customStocks: cleanCustomStocks ? JSON.stringify(cleanCustomStocks) : null,
+          strategy: input.strategy || "standard",
           status: "pending",
         });
 
@@ -214,6 +216,7 @@ export const appRouter = router({
             cdLookbackBars: input.cdLookbackBars,
             ladderBreakTimeframes: input.ladderBreakTimeframes as Timeframe[],
             customStocks: cleanCustomStocks || undefined,
+            strategy: (input.strategy || "standard") as "standard" | "aggressive",
           }).catch(err => console.error("[Backtest] Error:", err));
         }, 100);
 

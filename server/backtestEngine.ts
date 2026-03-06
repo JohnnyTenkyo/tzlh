@@ -12,6 +12,8 @@ import {
   hasCDSignalInRange,
   detectBuySignal,
   detectSellSignal,
+  detectAggressiveBuySignal,
+  detectAggressiveSellSignal,
 } from "./indicators";
 import { getDb } from "./db";
 import {
@@ -34,6 +36,7 @@ export interface BacktestConfig {
   cdLookbackBars: number;
   ladderBreakTimeframes: Timeframe[];
   customStocks?: string[]; // 自选股票列表，为空时使用全部股票池
+  strategy?: "standard" | "aggressive"; // 回测策略：标准（蓝梯突破黄梯）或激进（收盘站上蓝梯）
 }
 
 // ============ 持仓状态 ============
@@ -169,13 +172,23 @@ async function backtestSymbol(
         }
       }
 
-      // 检查卖出信号
-      const sellSig = detectSellSignal(
-        candlesUpTo as Partial<Record<Timeframe, Candle[]>>,
-        position.entryTimeframe,
-        closePrice,
-        position.dailySellTriggered
-      );
+      // 检查卖出信号（根据策略选择对应卖出函数）
+      const aggressiveLadderTf = config.ladderBreakTimeframes.length > 0
+        ? config.ladderBreakTimeframes[0] as Timeframe
+        : "30m" as Timeframe;
+      const sellSig = config.strategy === "aggressive"
+        ? detectAggressiveSellSignal(
+            candlesUpTo as Partial<Record<Timeframe, Candle[]>>,
+            position.entryTimeframe,
+            closePrice,
+            position.dailySellTriggered
+          )
+        : detectSellSignal(
+            candlesUpTo as Partial<Record<Timeframe, Candle[]>>,
+            position.entryTimeframe,
+            closePrice,
+            position.dailySellTriggered
+          );
 
       if (sellSig) {
         let sellQty = 0;
@@ -227,17 +240,36 @@ async function backtestSymbol(
 
     // ============ 无持仓：检查买入信号 ============
     if (!state.positions.has(symbol)) {
-      // 检查资金是否充足（至少1%仓位）
+      // 检查资金是否充足（至少 1%仓位）
       const minAmount = state.balance * 0.01;
       if (state.balance < minAmount) continue;
 
-      const buySig = detectBuySignal(
-        candlesUpTo as Partial<Record<Timeframe, Candle[]>>,
-        config.cdSignalTimeframes,
-        config.ladderBreakTimeframes,
-        config.cdLookbackBars,
-        closePrice
-      );
+      // 激进策略与标准策略买入信号检测
+      let buySig: { type: string; timeframe: Timeframe; reason: string } | null = null;
+
+      if (config.strategy === "aggressive") {
+        // 激进策略：CD信号后，30分钟收盘价站上蓝梯即买入
+        const aggressiveLadderTf = config.ladderBreakTimeframes.length > 0
+          ? config.ladderBreakTimeframes[0] as Timeframe
+          : "30m" as Timeframe;
+        const aggBuySig = detectAggressiveBuySignal(
+          candlesUpTo as Partial<Record<Timeframe, Candle[]>>,
+          config.cdSignalTimeframes,
+          aggressiveLadderTf,
+          config.cdLookbackBars,
+          closePrice
+        );
+        if (aggBuySig) buySig = aggBuySig;
+      } else {
+        // 标准策略：蓝梯突破黄梯买入
+        buySig = detectBuySignal(
+          candlesUpTo as Partial<Record<Timeframe, Candle[]>>,
+          config.cdSignalTimeframes,
+          config.ladderBreakTimeframes,
+          config.cdLookbackBars,
+          closePrice
+        );
+      }
 
       if (buySig) {
         // 计算买入金额（每只股票最多用20%仓位，第一买点50%即10%总仓位）

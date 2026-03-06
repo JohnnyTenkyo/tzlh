@@ -81,6 +81,8 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
   const [cdTimeframes, setCdTimeframes] = useState<string[]>(["4h", "1h"]);
   const [cdLookback, setCdLookback] = useState(5);
   const [ladderTimeframes, setLadderTimeframes] = useState<string[]>(["30m"]);
+  // 策略选择
+  const [strategy, setStrategy] = useState<"standard" | "aggressive">("standard");
   // 自选股票
   const [useCustomStocks, setUseCustomStocks] = useState(false);
   const [customStocksInput, setCustomStocksInput] = useState("");
@@ -121,6 +123,7 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
       cdLookbackBars: cdLookback,
       ladderBreakTimeframes: ladderTimeframes,
       customStocks: useCustomStocks ? customStocksList : undefined,
+      strategy,
     });
   };
 
@@ -256,6 +259,53 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
               <p>• 第二卖点：当前级别蓝梯上边缘低于黄梯下边缘 → 卖出余下50%</p>
               <p>• 日线CD卖出 + 收盘跌破蓝梯下边缘 → 分批卖出</p>
             </div>
+          </div>
+
+          {/* 策略选择 */}
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold text-foreground border-b border-border pb-1">回测策略</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setStrategy("standard")}
+                className={`p-3 rounded border text-left transition-all ${
+                  strategy === "standard"
+                    ? "bg-blue-500/10 border-blue-500/50 text-blue-400"
+                    : "bg-muted border-border text-muted-foreground hover:border-primary/50"
+                }`}
+              >
+                <div className="text-xs font-semibold mb-1">📊 标准策略</div>
+                <div className="text-xs opacity-80">蓝梯突破黄梯后买入，信号更稳健，入场较慢</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setStrategy("aggressive")}
+                className={`p-3 rounded border text-left transition-all ${
+                  strategy === "aggressive"
+                    ? "bg-orange-500/10 border-orange-500/50 text-orange-400"
+                    : "bg-muted border-border text-muted-foreground hover:border-primary/50"
+                }`}
+              >
+                <div className="text-xs font-semibold mb-1">⚡ 激进策略</div>
+                <div className="text-xs opacity-80">CD信号后收盘站上蓝梯即买入，入场更快，止损更严</div>
+              </button>
+            </div>
+            {strategy === "standard" && (
+              <div className="text-xs text-muted-foreground bg-muted/50 rounded p-3 space-y-1">
+                <p className="font-medium text-foreground">标准策略逻辑：</p>
+                <p>• 买入：蓝梯上边缘突破黄梯上边缘 → 买入50%；蓝梯下边缘高于黄梯上边缘 → 再买50%</p>
+                <p>• 卖出：上级别收盘低于蓝梯下边缘 → 卖50%；蓝梯上边缘低于黄梯下边缘 → 卖余下50%</p>
+              </div>
+            )}
+            {strategy === "aggressive" && (
+              <div className="text-xs text-muted-foreground bg-orange-500/5 border border-orange-500/20 rounded p-3 space-y-1">
+                <p className="font-medium text-orange-400">激进策略逻辑：</p>
+                <p>• 买入：CD信号后30分钟收盘站上蓝梯 → 买入50%；蓝梯突破黄梯 → 加仓50%</p>
+                <p>• 加仓：蓝梯回撞黄梯（未破黄梯下边缘）+ CD信号 → 绝佳加仓点</p>
+                <p>• 止损：收盘跌破蓝梯下边缘 → 清仓止损</p>
+                <p>• 退出：蓝梯上边缘低于黄梯下边缘 → 趋势反转，清仓</p>
+              </div>
+            )}
           </div>
 
           {/* 自选股票 */}

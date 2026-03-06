@@ -75,6 +75,8 @@ export interface LadderSignal {
   closeAboveBlueUp: boolean;
   // 蓝梯刚突破黄梯（蓝梯上边缘从下方穿越黄梯上边缘）
   blueCrossYellowUp: boolean;
+  // 蓝梯回撞黄梯：蓝梯在黄梯上方，但蓝梯下边缘接近黄梯上边缘（蓝梯下边缘 >= 黄梯下边缘 且 <= 黄梯上边缘 * 1.02）
+  blueRetestYellow: boolean;
   // 最新值
   latestBlueUp: number;
   latestBlueDn: number;
@@ -93,6 +95,7 @@ export function getLadderSignal(candles: Candle[], ladder: LadderResult): Ladder
       closeBelowBlueDn: false,
       closeAboveBlueUp: false,
       blueCrossYellowUp: false,
+      blueRetestYellow: false,
       latestBlueUp: 0,
       latestBlueDn: 0,
       latestYellowUp: 0,
@@ -121,6 +124,8 @@ export function getLadderSignal(candles: Candle[], ladder: LadderResult): Ladder
     closeAboveBlueUp: close > blueUp,
     // 蓝梯上边缘刚突破黄梯上边缘（前一根在下方，当前在上方）
     blueCrossYellowUp: prevBlueUp <= prevYellowUp && blueUp > yellowUp,
+    // 蓝梯回撞黄梯：蓝梯在黄梯上方（蓝梯下边缘 >= 黄梯下边缘）且蓝梯下边缘接近黄梯上边缘（<= 黄梯上边缘 * 1.02）
+    blueRetestYellow: blueDn >= yellowDn && blueDn <= yellowUp * 1.02,
     latestBlueUp: blueUp,
     latestBlueDn: blueDn,
     latestYellowUp: yellowUp,
@@ -818,4 +823,173 @@ export function detectSellSignal(
   }
 
   return null;
+}
+
+// ============ 激进策略买入信号检测 ============
+/**
+ * 激进策略买入逻辑：
+ * 1. 出现CD抄底信号（DXDX）后，30分钟级别收盘价站上蓝梯上边缘 → 买入50%（激进第一买点）
+ * 2. 蓝梯上边缘突破黄梯上边缘 → 加仓50%（激进第二买点）
+ * 3. 蓝梯回撞黄梯（蓝梯下边缘接近黄梯上边缘但未破黄梯下边缘）+ CD信号 → 绝佳加仓点
+ */
+export interface AggressiveBuySignal {
+  type: "aggressive_first_buy" | "aggressive_add_position" | "aggressive_retest_add";
+  timeframe: Timeframe;
+  cdTimeframe: string;
+  reason: string;
+}
+
+export function detectAggressiveBuySignal(
+  candles: TimeframeCandles,
+  cdTimeframes: Timeframe[],
+  ladderTimeframe: Timeframe,  // 激进策略主要用30分钟级别
+  cdLookback: number,
+  _currentPrice: number
+): AggressiveBuySignal | null {
+  // 步骤1：检查CD信号
+  for (const tf of cdTimeframes) {
+    const c = candles[tf];
+    if (!c || c.length < 60) return null;
+    if (!hasCDSignalInRange(c, cdLookback)) return null;
+  }
+
+  const cdDesc = cdTimeframes.join("/");
+  const c = candles[ladderTimeframe];
+  if (!c || c.length < 90) return null;
+
+  const ladder = calculateLadder(c);
+  const sig = getLadderSignal(c, ladder);
+
+  // 绝佳加仓点：蓝梯回撞黄梯（蓝梯在黄梯上方但接近黄梯上边缘）+ CD信号
+  if (sig.blueRetestYellow && sig.blueAboveYellow) {
+    return {
+      type: "aggressive_retest_add",
+      timeframe: ladderTimeframe,
+      cdTimeframe: cdDesc,
+      reason: `${cdDesc}级别CD抄底信号 + ${ladderTimeframe}级别蓝梯回撞黄梯（蓝梯下边缘接近黄梯上边缘但未破黄梯下边缘）→ 绝佳加仓点，买入50%仓位`,
+    };
+  }
+
+  // 激进第二买点：蓝梯上边缘突破黄梯上边缘（加仓）
+  if (sig.blueCrossYellowUp) {
+    return {
+      type: "aggressive_add_position",
+      timeframe: ladderTimeframe,
+      cdTimeframe: cdDesc,
+      reason: `${cdDesc}级别CD抄底信号 + ${ladderTimeframe}级别蓝梯上边缘突破黄梯上边缘 → 激进加仓点，买入50%仓位`,
+    };
+  }
+
+  // 激进第一买点：收盘价站上蓝梯上边缘（CD信号出现后）
+  if (sig.closeAboveBlueUp) {
+    return {
+      type: "aggressive_first_buy",
+      timeframe: ladderTimeframe,
+      cdTimeframe: cdDesc,
+      reason: `${cdDesc}级别CD抄底信号 + ${ladderTimeframe}级别收盘价（${sig.latestClose.toFixed(2)}）站上蓝梯上边缘（${sig.latestBlueUp.toFixed(2)}）→ 激进买入，买入50%仓位`,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * 激进策略卖出逻辑：
+ * 1. 收盘价跌破蓝梯下边缘 → 止损卖出（激进止损）
+ * 2. 蓝梯上边缘低于黄梯下边缘 → 趋势反转卖出（全仓卖出）
+ * 持有条件：蓝梯在黄梯之上（blueAboveYellow = true）
+ */
+export interface AggressiveSellSignal {
+  type: "aggressive_stop_loss" | "aggressive_trend_exit" | "aggressive_hold_exit";
+  timeframe: Timeframe;
+  reason: string;
+}
+
+export function detectAggressiveSellSignal(
+  candles: TimeframeCandles,
+  entryTimeframe: Timeframe,
+  _currentPrice: number,
+  _dailySellTriggered: boolean
+): AggressiveSellSignal | null {
+  const c = candles[entryTimeframe];
+  if (!c || c.length < 90) return null;
+
+  const ladder = calculateLadder(c);
+  const sig = getLadderSignal(c, ladder);
+
+  // 止损：收盘价跌破蓝梯下边缘
+  if (sig.closeBelowBlueDn) {
+    return {
+      type: "aggressive_stop_loss",
+      timeframe: entryTimeframe,
+      reason: `${entryTimeframe}级别收盘价（${sig.latestClose.toFixed(2)}）跌破蓝梯下边缘（${sig.latestBlueDn.toFixed(2)}），激进止损，卖出全部仓位`,
+    };
+  }
+
+  // 趋势反转：蓝梯上边缘低于黄梯下边缘（蓝梯完全跌破黄梯）
+  if (sig.blueUpBelowYellowDn) {
+    return {
+      type: "aggressive_trend_exit",
+      timeframe: entryTimeframe,
+      reason: `${entryTimeframe}级别蓝梯上边缘（${sig.latestBlueUp.toFixed(2)}）低于黄梯下边缘（${sig.latestYellowDn.toFixed(2)}），趋势反转，卖出全部仓位`,
+    };
+  }
+
+  return null;
+}
+
+// ============ 激进策略4321评分（含激进信号） ============
+export interface AggressiveScore extends Strategy4321Score {
+  aggressiveSignal: boolean;   // 是否有激进买入信号
+  aggressiveType: string;      // 激进信号类型
+  aggressiveReason: string;    // 激进信号原因
+}
+
+export function calculateAggressiveScore(
+  symbol: string,
+  candles: TimeframeCandles,
+  lookback = 5
+): AggressiveScore {
+  // 先计算标准4321评分
+  const base = calculate4321Score(symbol, candles, lookback);
+
+  // 检查激进信号：30分钟收盘价站上蓝梯（CD信号出现后）
+  let aggressiveSignal = false;
+  let aggressiveType = "";
+  let aggressiveReason = "";
+
+  const c30m = candles["30m"];
+  if (c30m && c30m.length >= 90) {
+    const ladder = calculateLadder(c30m);
+    const sig = getLadderSignal(c30m, ladder);
+
+    // 检查任意级别是否有CD信号
+    const hasCDAnywhere = (["4h", "3h", "2h", "1h", "30m"] as Timeframe[]).some(tf => {
+      const c = candles[tf];
+      return c && c.length >= 60 && hasCDSignalInRange(c, lookback);
+    });
+
+    if (hasCDAnywhere) {
+      if (sig.blueRetestYellow && sig.blueAboveYellow) {
+        aggressiveSignal = true;
+        aggressiveType = "retest_add";
+        aggressiveReason = `30分钟蓝梯回撞黄梯 + CD信号 → 绝佳加仓点`;
+      } else if (sig.blueCrossYellowUp) {
+        aggressiveSignal = true;
+        aggressiveType = "add_position";
+        aggressiveReason = `30分钟蓝梯突破黄梯 + CD信号 → 激进加仓点`;
+      } else if (sig.closeAboveBlueUp) {
+        aggressiveSignal = true;
+        aggressiveType = "first_buy";
+        aggressiveReason = `30分钟收盘价站上蓝梯 + CD信号 → 激进买入点`;
+      }
+    }
+  }
+
+  return {
+    ...base,
+    aggressiveSignal,
+    aggressiveType,
+    aggressiveReason,
+  };
 }

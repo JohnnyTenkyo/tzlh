@@ -45,6 +45,9 @@ interface RecommendationItem {
   ladderBreakLevel: string;
   reason: string;
   details: Record<string, number>;
+  aggressiveSignal?: boolean;
+  aggressiveType?: string;
+  aggressiveReason?: string;
 }
 
 const TIMEFRAME_OPTIONS = [
@@ -105,6 +108,11 @@ function RecommendationCard({ item, rank }: { item: RecommendationItem; rank: nu
                     {item.ladderBreakLevel} 蓝梯↑
                   </span>
                 )}
+                {item.aggressiveSignal && (
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 border border-orange-500/20">
+                    ⚡ 激进
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -120,6 +128,13 @@ function RecommendationCard({ item, rank }: { item: RecommendationItem; rank: nu
           </div>
         </div>
         <p className="text-xs text-muted-foreground mt-3 leading-relaxed">{item.reason}</p>
+        {item.aggressiveSignal && item.aggressiveReason && (
+          <div className="mt-2 p-2 rounded bg-orange-500/5 border border-orange-500/20">
+            <p className="text-xs text-orange-400">
+              <span className="font-medium">⚡ 激进信号：</span>{item.aggressiveReason}
+            </p>
+          </div>
+        )}
         {showChart && (
           <div className="mt-4">
             {/* 时间周期切换按鈕 */}

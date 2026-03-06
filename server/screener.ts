@@ -1,12 +1,15 @@
 /**
  * 股票推荐扫描服务
  * 4321打法：多级别CD信号 + 30分钟蓝梯突破黄梯
+ * 激进策略：CD信号出现后，30分钟收盘价站上蓝梯即买入
  */
 import { fetchCandles } from "./marketData";
 import {
   calculate4321Score,
+  calculateAggressiveScore,
   TimeframeCandles,
   Strategy4321Score,
+  AggressiveScore,
 } from "./indicators";
 import { getDb } from "./db";
 import { stockRecommendations } from "../drizzle/schema";
@@ -14,15 +17,18 @@ import { eq, and } from "drizzle-orm";
 import { US_STOCKS } from "../shared/stockPool";
 
 let isScanning = false;
-const scanCache: Map<string, Strategy4321Score> = new Map();
+const scanCache: Map<string, AggressiveScore> = new Map();
 let lastScanDate = "";
 
+export interface ScanResult extends AggressiveScore {
+  // AggressiveScore already extends Strategy4321Score
+}
+
 /**
- * 扫描单只股票的4321信号
+ * 扫描单只股票（标准4321 + 激进策略）
  */
-async function scanStock(symbol: string): Promise<Strategy4321Score | null> {
+async function scanStock(symbol: string): Promise<AggressiveScore | null> {
   try {
-    // 并行获取多时间级别K线
     const [c4h, c3h, c2h, c1h, c30m, c1d] = await Promise.all([
       fetchCandles(symbol, "4h"),
       fetchCandles(symbol, "3h"),
@@ -41,7 +47,7 @@ async function scanStock(symbol: string): Promise<Strategy4321Score | null> {
       "1d": c1d,
     };
 
-    return calculate4321Score(symbol, candles, 5);
+    return calculateAggressiveScore(symbol, candles, 5);
   } catch (err) {
     console.error(`[Screener] Error scanning ${symbol}:`, err);
     return null;
@@ -51,7 +57,7 @@ async function scanStock(symbol: string): Promise<Strategy4321Score | null> {
 /**
  * 批量扫描股票池
  */
-export async function runDailyScan(forceRefresh = false): Promise<Strategy4321Score[]> {
+export async function runDailyScan(forceRefresh = false): Promise<AggressiveScore[]> {
   const today = new Date().toISOString().split("T")[0];
 
   if (!forceRefresh && lastScanDate === today && scanCache.size > 0) {
@@ -66,9 +72,9 @@ export async function runDailyScan(forceRefresh = false): Promise<Strategy4321Sc
   isScanning = true;
   console.log(`[Screener] Starting daily scan for ${today}...`);
 
-  const results: Strategy4321Score[] = [];
+  const results: AggressiveScore[] = [];
   const batchSize = 5;
-  const stocksToScan = US_STOCKS.slice(0, 200).map(s => s.symbol); // 扫描前200只
+  const stocksToScan = US_STOCKS.slice(0, 200).map(s => s.symbol);
 
   for (let i = 0; i < stocksToScan.length; i += batchSize) {
     const batch = stocksToScan.slice(i, i + batchSize);
@@ -83,23 +89,28 @@ export async function runDailyScan(forceRefresh = false): Promise<Strategy4321Sc
       }
     }
 
-    // 避免API限流
     if (i + batchSize < stocksToScan.length) {
       await new Promise(resolve => setTimeout(resolve, 1500));
     }
   }
 
-  // 保存到数据库
+  // 保存到数据库（保存激进策略信息到details字段）
   try {
     const db = await getDb();
     if (db && results.length > 0) {
       for (const score of results) {
-        // 检查今天是否已有记录
         const existing = await db.select().from(stockRecommendations)
           .where(and(
             eq(stockRecommendations.symbol, score.symbol),
             eq(stockRecommendations.date, today)
           )).limit(1);
+
+        const detailsWithAggressive = {
+          ...score.details,
+          aggressiveSignal: score.aggressiveSignal,
+          aggressiveType: score.aggressiveType,
+          aggressiveReason: score.aggressiveReason,
+        };
 
         if (existing.length === 0) {
           await db.insert(stockRecommendations).values({
@@ -110,7 +121,7 @@ export async function runDailyScan(forceRefresh = false): Promise<Strategy4321Sc
             cdSignalLevels: JSON.stringify(score.cdLevels),
             ladderBreakLevel: score.ladderBreakLevel,
             reason: score.reason,
-            details: JSON.stringify(score.details),
+            details: JSON.stringify(detailsWithAggressive),
           });
         }
       }
@@ -130,7 +141,7 @@ export async function runDailyScan(forceRefresh = false): Promise<Strategy4321Sc
  * 获取今日推荐（优先从数据库读取）
  */
 export async function getTodayRecommendations(): Promise<{
-  results: Strategy4321Score[];
+  results: AggressiveScore[];
   fromCache: boolean;
   scanDate: string;
 }> {
@@ -143,15 +154,21 @@ export async function getTodayRecommendations(): Promise<{
         .where(eq(stockRecommendations.date, today));
 
       if (dbResults.length > 0) {
-        const results: Strategy4321Score[] = dbResults.map(r => ({
-          symbol: r.symbol,
-          totalScore: Number(r.totalScore),
-          matchLevel: r.matchLevel || "1h",
-          cdLevels: r.cdSignalLevels ? JSON.parse(r.cdSignalLevels) : [],
-          ladderBreakLevel: r.ladderBreakLevel || "30m",
-          reason: r.reason || "",
-          details: r.details ? JSON.parse(r.details) : {},
-        }));
+        const results: AggressiveScore[] = dbResults.map(r => {
+          const details = r.details ? JSON.parse(r.details) : {};
+          return {
+            symbol: r.symbol,
+            totalScore: Number(r.totalScore),
+            matchLevel: r.matchLevel || "",
+            cdLevels: r.cdSignalLevels ? JSON.parse(r.cdSignalLevels) : [],
+            ladderBreakLevel: r.ladderBreakLevel || "",
+            reason: r.reason || "",
+            details,
+            aggressiveSignal: details.aggressiveSignal || false,
+            aggressiveType: details.aggressiveType || "",
+            aggressiveReason: details.aggressiveReason || "",
+          };
+        });
 
         return {
           results: results.sort((a, b) => b.totalScore - a.totalScore),
@@ -164,7 +181,6 @@ export async function getTodayRecommendations(): Promise<{
     console.error("[Screener] DB read error:", err);
   }
 
-  // 触发实时扫描
   const results = await runDailyScan();
   return { results, fromCache: false, scanDate: today };
 }

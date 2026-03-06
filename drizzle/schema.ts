@@ -93,6 +93,9 @@ export const backtestSessions = mysqlTable("backtest_sessions", {
   // Custom stocks (JSON array of symbols, null = use full pool)
   customStocks: text("customStocks"), // JSON: ["NVDA","AAPL"] or null
 
+  // Strategy type
+  strategy: mysqlEnum("strategy", ["standard", "aggressive"]).default("standard").notNull(),
+
   // Results
   finalBalance: decimal("finalBalance", { precision: 16, scale: 2 }),
   totalReturn: decimal("totalReturn", { precision: 10, scale: 4 }), // percent
