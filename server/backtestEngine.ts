@@ -72,19 +72,34 @@ const runningTasks = new Map<number, boolean>();
 // K线数据缓存（避免重复API调用）
 const candleCache = new Map<string, Candle[]>();
 const CACHE_KEY_SEPARATOR = "::";
+const API_TIMEOUT_MS = 10000; // API 调用超时 10 秒
+const MAX_CONCURRENT_REQUESTS = 3; // 最多并发 3 个 API 请求
 
 function getCacheKey(symbol: string, tf: Timeframe, startDate: string, endDate: string): string {
   return `${symbol}${CACHE_KEY_SEPARATOR}${tf}${CACHE_KEY_SEPARATOR}${startDate}${CACHE_KEY_SEPARATOR}${endDate}`;
 }
 
 /**
- * 从缓存或API获取K线数据
+ * 带超时的 Promise 包装
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`API 调用超时（${timeoutMs}ms）`)), timeoutMs)
+    ),
+  ]);
+}
+
+/**
+ * 从缓存或API获取K线数据（带超时和重试）
  */
 async function getCandlesWithCache(
   symbol: string,
   tf: Timeframe,
   startDate: string,
-  endDate: string
+  endDate: string,
+  retries: number = 2
 ): Promise<Candle[]> {
   const cacheKey = getCacheKey(symbol, tf, startDate, endDate);
   
@@ -92,58 +107,160 @@ async function getCandlesWithCache(
     return candleCache.get(cacheKey)!;
   }
   
-  const candles = await fetchHistoricalCandles(symbol, tf, startDate, endDate);
-  candleCache.set(cacheKey, candles);
-  
-  // 缓存大小超过100条记录时清理最旧的记录
-  if (candleCache.size > 100) {
-    const firstKey = candleCache.keys().next().value as string | undefined;
-    if (firstKey) candleCache.delete(firstKey);
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const candles = await withTimeout(
+        fetchHistoricalCandles(symbol, tf, startDate, endDate),
+        API_TIMEOUT_MS
+      );
+      candleCache.set(cacheKey, candles);
+      
+      // 缓存大小超过 200 条记录时清理最旧的记录
+      if (candleCache.size > 200) {
+        const firstKey = candleCache.keys().next().value as string | undefined;
+        if (firstKey) candleCache.delete(firstKey);
+      }
+      
+      return candles;
+    } catch (err) {
+      lastError = err as Error;
+      if (attempt < retries - 1) {
+        // 指数退避：第一次等待 500ms，第二次等待 1000ms
+        await new Promise(resolve => setTimeout(resolve, 500 * Math.pow(2, attempt)));
+      }
+    }
   }
   
-  return candles;
+  console.warn(`[Backtest] Failed to fetch ${symbol} ${tf} after ${retries} retries:`, lastError?.message);
+  return [];
 }
 
 /**
- * 获取日期列表（工作日）
+ * 并发获取多只股票的多个时间级别数据
  */
+async function getCandlesForStocks(
+  symbols: string[],
+  timeframes: Timeframe[],
+  startDate: string,
+  endDate: string
+): Promise<Map<string, Partial<Record<Timeframe, Candle[]>>>> {
+  const result = new Map<string, Partial<Record<Timeframe, Candle[]>>>();
+  
+  // 构建所有需要的请求
+  const requests: Array<{
+    symbol: string;
+    tf: Timeframe;
+    promise: Promise<Candle[]>;
+  }> = [];
+  
+  for (const symbol of symbols) {
+    for (const tf of timeframes) {
+      requests.push({
+        symbol,
+        tf,
+        promise: getCandlesWithCache(symbol, tf, startDate, endDate),
+      });
+    }
+  }
+  
+  // 使用并发控制执行请求
+  const results = await executeWithConcurrency(
+    requests.map(r => () => r.promise),
+    MAX_CONCURRENT_REQUESTS
+  );
+  
+  // 整理结果
+  for (let i = 0; i < requests.length; i++) {
+    const { symbol, tf } = requests[i];
+    const candles = results[i];
+    
+    if (!result.has(symbol)) {
+      result.set(symbol, {});
+    }
+    
+    if (candles && candles.length > 0) {
+      result.get(symbol)![tf] = candles;
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * 并发执行任务，限制并发数
+ */
+async function executeWithConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  maxConcurrent: number
+): Promise<T[]> {
+  const results: T[] = [];
+  const executing: Promise<void>[] = [];
+  
+  for (let i = 0; i < tasks.length; i++) {
+    const task = tasks[i];
+    
+    const promise = Promise.resolve().then(async () => {
+      results[i] = await task();
+    });
+    
+    executing.push(promise);
+    
+    if (executing.length >= maxConcurrent) {
+      await Promise.race(executing);
+      executing.splice(executing.findIndex(p => p === promise), 1);
+    }
+  }
+  
+  await Promise.all(executing);
+  return results;
+}
+
 function getDateRange(startDate: string, endDate: string): string[] {
   const dates: string[] = [];
-  const start = new Date(startDate);
+  const current = new Date(startDate);
   const end = new Date(endDate);
-  const cur = new Date(start);
 
-  while (cur <= end) {
-    const day = cur.getDay();
-    if (day !== 0 && day !== 6) { // 排除周末
-      dates.push(cur.toISOString().split("T")[0]);
-    }
-    cur.setDate(cur.getDate() + 1);
+  while (current <= end) {
+    const year = current.getFullYear();
+    const month = String(current.getMonth() + 1).padStart(2, "0");
+    const day = String(current.getDate()).padStart(2, "0");
+    dates.push(`${year}-${month}-${day}`);
+    current.setDate(current.getDate() + 1);
   }
+
   return dates;
 }
 
-/**
- * 获取指定日期之前的K线（用于计算指标）
- */
-function getCandlesUpTo(allCandles: Candle[], dateStr: string): Candle[] {
-  const ts = new Date(dateStr).getTime() + 86400000; // 包含当天
-  return allCandles.filter(c => c.time <= ts);
+function getClosePriceOnDate(candles: Candle[], date: string): number | null {
+  const dateTime = new Date(date).getTime();
+  for (const c of candles) {
+    if (c.time === dateTime) return c.close;
+  }
+  return null;
+}
+
+function calcMaxDrawdown(equityCurve: { date: string; value: number }[]): number {
+  if (equityCurve.length === 0) return 0;
+
+  let maxValue = equityCurve[0].value;
+  let maxDrawdown = 0;
+
+  for (const point of equityCurve) {
+    if (point.value > maxValue) {
+      maxValue = point.value;
+    }
+    const dd = (maxValue - point.value) / maxValue;
+    if (dd > maxDrawdown) {
+      maxDrawdown = dd;
+    }
+  }
+
+  return maxDrawdown * 100;
 }
 
 /**
- * 获取指定日期的收盘价
- */
-function getClosePriceOnDate(candles: Candle[], dateStr: string): number | null {
-  const dayStart = new Date(dateStr).getTime();
-  const dayEnd = dayStart + 86400000;
-  const dayCandles = candles.filter(c => c.time >= dayStart && c.time < dayEnd);
-  if (dayCandles.length === 0) return null;
-  return dayCandles[dayCandles.length - 1].close;
-}
-
-/**
- * 执行单只股票的回测逻辑
+ * 单只股票回测
  */
 async function backtestSymbol(
   symbol: string,
@@ -152,61 +269,37 @@ async function backtestSymbol(
   dates: string[],
   state: BacktestState
 ): Promise<void> {
-  const dailyCandles = allCandlesByTf["1d"] || [];
-  if (dailyCandles.length === 0) return;
+  // 检查是否有足够的数据
+  const has1d = allCandlesByTf["1d"] && allCandlesByTf["1d"]!.length > 0;
+  if (!has1d) return;
 
   for (const date of dates) {
-    const closePrice = getClosePriceOnDate(dailyCandles, date);
-    if (!closePrice) continue;
-
-    // 构建截止当天的K线
+    const dateTime = new Date(date).getTime();
     const candlesUpTo: Partial<Record<Timeframe, Candle[]>> = {};
-    for (const tf of Object.keys(allCandlesByTf) as Timeframe[]) {
-      const c = allCandlesByTf[tf];
-      if (c) candlesUpTo[tf] = getCandlesUpTo(c, date);
+
+    // 截取到当前日期的K线
+    for (const [tf, candles] of Object.entries(allCandlesByTf)) {
+      if (candles) {
+        candlesUpTo[tf as Timeframe] = candles.filter(c => c.time <= dateTime);
+      }
     }
 
-    const position = state.positions.get(symbol);
+    const dailyCandles = candlesUpTo["1d"] || [];
+    if (dailyCandles.length === 0) continue;
 
-    // ============ 持仓中：检查卖出信号 ============
-    if (position) {
-      // 日级别卖出后次日检查
-      if (position.dailySellTriggered && position.dailySellDate && position.dailySellDate !== date) {
-        const dailyC = candlesUpTo["1d"] || [];
-        if (dailyC.length >= 90) {
-          const ladder = calculateLadder(dailyC);
-          const sig = getLadderSignal(dailyC, ladder);
-          if (sig.closeBelowBlueDn) {
-            // 次日仍在蓝梯下方，卖出剩余
-            const qty = position.quantity;
-            if (qty > 0) {
-              const amount = qty * closePrice;
-              const pnl = amount - qty * position.avgCost;
-              state.trades.push({
-                sessionId: config.sessionId,
-                symbol,
-                type: "sell",
-                quantity: String(qty),
-                price: String(closePrice.toFixed(4)),
-                amount: String(amount.toFixed(2)),
-                tradeDate: date,
-                signalTimeframe: "1d",
-                signalType: "daily_sell_all",
-                reason: "日线CD卖出信号触发后次日未回到蓝梯上方，清仓",
-                pnl: String(pnl.toFixed(2)),
-                pnlPercent: String(((pnl / (qty * position.avgCost)) * 100).toFixed(4)),
-              });
-              state.balance += amount;
-              if (pnl > 0) state.winTrades++;
-              else state.lossTrades++;
-              state.totalTrades++;
-              state.positions.delete(symbol);
-              continue;
-            }
-          } else {
-            position.dailySellTriggered = false;
-            position.dailySellDate = null;
-          }
+    const closePrice = getClosePriceOnDate(dailyCandles, date);
+    if (closePrice === null) continue;
+
+    // ============ 有持仓：检查卖出信号 ============
+    if (state.positions.has(symbol)) {
+      const position = state.positions.get(symbol)!;
+
+      // 检查日线CD卖出信号（仅在第一次卖出后检查）
+      if (!position.dailySellTriggered && closePrice < position.avgCost * 1.05) {
+        const dailyCDSell = hasCDSignalInRange(dailyCandles, 10);
+        if (dailyCDSell && closePrice < position.avgCost) {
+          position.dailySellTriggered = true;
+          position.dailySellDate = date;
         }
       }
 
@@ -299,198 +392,57 @@ async function backtestSymbol(
         );
         if (aggBuySig) buySig = aggBuySig;
       } else {
-        // 标准策略：蓝梯突破黄梯买入
-        buySig = detectBuySignal(
+        // 标准策略：蓝梯突破黄梯
+        const stdBuySig = detectBuySignal(
           candlesUpTo as Partial<Record<Timeframe, Candle[]>>,
           config.cdSignalTimeframes,
           config.ladderBreakTimeframes,
           config.cdLookbackBars,
           closePrice
         );
+        if (stdBuySig) buySig = stdBuySig;
       }
 
       if (buySig) {
-        // 计算买入金额（每只股票最多用20%仓位，第一买点50%即10%总仓位）
-        const maxAllocation = state.balance * 0.2;
-        const buyAmount = buySig.type === "first_buy"
-          ? maxAllocation * 0.5
-          : maxAllocation * 0.5;
-
-        if (buyAmount < 100) continue; // 最小买入100美元
-
-        const qty = buyAmount / closePrice;
+        const buyAmount = state.balance * 0.5;
+        const buyQty = buyAmount / closePrice;
 
         state.trades.push({
           sessionId: config.sessionId,
           symbol,
           type: "buy",
-          quantity: String(qty.toFixed(6)),
+          quantity: String(buyQty.toFixed(6)),
           price: String(closePrice.toFixed(4)),
           amount: String(buyAmount.toFixed(2)),
           tradeDate: date,
           signalTimeframe: buySig.timeframe,
           signalType: buySig.type,
           reason: buySig.reason,
-          pnl: null,
-          pnlPercent: null,
+          pnl: "0",
+          pnlPercent: "0",
         });
 
         state.balance -= buyAmount;
-
         state.positions.set(symbol, {
           symbol,
-          quantity: qty,
+          quantity: buyQty,
           avgCost: closePrice,
           entryTimeframe: buySig.timeframe,
-          entryType: (buySig.type === "first_buy" || buySig.type === "second_buy") ? buySig.type : "first_buy",
-          firstBuyDone: buySig.type === "first_buy",
-          secondBuyDone: buySig.type === "second_buy",
+          entryType: "first_buy",
+          firstBuyDone: true,
+          secondBuyDone: false,
           dailySellTriggered: false,
           dailySellDate: null,
-          aggressiveAddDone: buySig.type === "aggressive_add_position",
-          aggressiveRetestAddDone: buySig.type === "aggressive_retest_add",
+          aggressiveAddDone: false,
+          aggressiveRetestAddDone: false,
         });
-      }
-    } else if (state.positions.has(symbol)) {
-      // 已有第一买点，检查第二买点
-      const pos = state.positions.get(symbol)!;
-
-      if (config.strategy === "aggressive") {
-        // ============ 激进策略加仓逻辑 ============
-        const aggressiveLadderTf2 = config.ladderBreakTimeframes.length > 0
-          ? config.ladderBreakTimeframes[0] as Timeframe
-          : "30m" as Timeframe;
-        const aggCandles = candlesUpTo[aggressiveLadderTf2] || [];
-        if (aggCandles.length >= 90) {
-          const aggLadder = calculateLadder(aggCandles);
-          const aggSig = getLadderSignal(aggCandles, aggLadder);
-
-          // 加仓点1：蓝梯突破黄梯上边缘（未加仓过）
-          if (aggSig.blueCrossYellowUp && !pos.aggressiveAddDone) {
-            const buyAmount = Math.min(state.balance * 0.1, state.balance * 0.2);
-            if (buyAmount >= 100) {
-              const qty = buyAmount / closePrice;
-              const newTotalQty = pos.quantity + qty;
-              const newAvgCost = (pos.quantity * pos.avgCost + qty * closePrice) / newTotalQty;
-
-              state.trades.push({
-                sessionId: config.sessionId,
-                symbol,
-                type: "buy",
-                quantity: String(qty.toFixed(6)),
-                price: String(closePrice.toFixed(4)),
-                amount: String(buyAmount.toFixed(2)),
-                tradeDate: date,
-                signalTimeframe: aggressiveLadderTf2,
-                signalType: "aggressive_add_position",
-                reason: `${aggressiveLadderTf2}级别蓝梯上边缘突破黄梯上边缘，激进加仓（50%仓位）`,
-                pnl: null,
-                pnlPercent: null,
-              });
-
-              state.balance -= buyAmount;
-              pos.quantity = newTotalQty;
-              pos.avgCost = newAvgCost;
-              pos.aggressiveAddDone = true;
-            }
-          }
-
-          // 加仓点2：蓝梯回撞黄梯（蓝梯在黄梯上方但接近黄梯上边缘）+ CD信号（未加仓过）
-          if (aggSig.blueRetestYellow && aggSig.blueAboveYellow && !pos.aggressiveRetestAddDone) {
-            // 检查是否有CD信号
-            const hasCd = config.cdSignalTimeframes.some(tf => {
-              const c = candlesUpTo[tf];
-              return c && hasCDSignalInRange(c, config.cdLookbackBars);
-            });
-
-            if (hasCd) {
-              const buyAmount = Math.min(state.balance * 0.1, state.balance * 0.2);
-              if (buyAmount >= 100) {
-                const qty = buyAmount / closePrice;
-                const newTotalQty = pos.quantity + qty;
-                const newAvgCost = (pos.quantity * pos.avgCost + qty * closePrice) / newTotalQty;
-
-                state.trades.push({
-                  sessionId: config.sessionId,
-                  symbol,
-                  type: "buy",
-                  quantity: String(qty.toFixed(6)),
-                  price: String(closePrice.toFixed(4)),
-                  amount: String(buyAmount.toFixed(2)),
-                  tradeDate: date,
-                  signalTimeframe: aggressiveLadderTf2,
-                  signalType: "aggressive_retest_add",
-                  reason: `${aggressiveLadderTf2}级别蓝梯回撞黄梯（蓝梯在黄梯上方但未破黄梯下边缘）+ CD担底信号，绝佳加仓点（50%仓位）`,
-                  pnl: null,
-                  pnlPercent: null,
-                });
-
-                state.balance -= buyAmount;
-                pos.quantity = newTotalQty;
-                pos.avgCost = newAvgCost;
-                pos.aggressiveRetestAddDone = true;
-              }
-            }
-          }
-        }
-      } else {
-        // ============ 标准策略第二买点 ============
-        if (pos.firstBuyDone && !pos.secondBuyDone) {
-          const lowestCandles = candlesUpTo[pos.entryTimeframe] || [];
-          if (lowestCandles.length >= 90) {
-            const ladder = calculateLadder(lowestCandles);
-            const sig = getLadderSignal(lowestCandles, ladder);
-            if (sig.blueDnAboveYellowUp) {
-              const buyAmount = state.balance * 0.1; // 10%总仓位
-              if (buyAmount >= 100) {
-                const qty = buyAmount / closePrice;
-                const newTotalQty = pos.quantity + qty;
-                const newAvgCost = (pos.quantity * pos.avgCost + qty * closePrice) / newTotalQty;
-
-                state.trades.push({
-                  sessionId: config.sessionId,
-                  symbol,
-                  type: "buy",
-                  quantity: String(qty.toFixed(6)),
-                  price: String(closePrice.toFixed(4)),
-                  amount: String(buyAmount.toFixed(2)),
-                  tradeDate: date,
-                  signalTimeframe: pos.entryTimeframe,
-                  signalType: "second_buy",
-                  reason: `${pos.entryTimeframe}级别蓝梯下边缘高于黄梯上边缘，触发第二买点（50%仓位）`,
-                  pnl: null,
-                  pnlPercent: null,
-                });
-
-                state.balance -= buyAmount;
-                pos.quantity = newTotalQty;
-                pos.avgCost = newAvgCost;
-                pos.secondBuyDone = true;
-              }
-            }
-          }
-        }
       }
     }
   }
 }
 
 /**
- * 计算最大回撤
- */
-function calcMaxDrawdown(equityCurve: { date: string; value: number }[]): number {
-  let maxVal = 0;
-  let maxDrawdown = 0;
-  for (const point of equityCurve) {
-    if (point.value > maxVal) maxVal = point.value;
-    const dd = (maxVal - point.value) / maxVal;
-    if (dd > maxDrawdown) maxDrawdown = dd;
-  }
-  return maxDrawdown * 100;
-}
-
-/**
- * 主回测函数
+ * 执行回测
  */
 export async function runBacktest(config: BacktestConfig): Promise<void> {
   if (runningTasks.get(config.sessionId)) {
@@ -547,58 +499,82 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
     warmupStart.setDate(warmupStart.getDate() - 180);
     const dataStartDate = warmupStart.toISOString().split("T")[0];
 
-    // 获取基准数据（QQQ/SPY）
-    const [qqqCandles, spyCandles] = await Promise.all([
-      getCandlesWithCache("QQQ", "1d", dataStartDate, config.endDate),
-      getCandlesWithCache("SPY", "1d", dataStartDate, config.endDate),
-    ]);
+    console.log(`[Backtest] Session ${config.sessionId} started. Stocks: ${stocksToTest.length}, Dates: ${dates.length}`);
+
+    // 并发获取基准数据（QQQ/SPY）
+    const benchmarkCandles = await getCandlesForStocks(
+      ["QQQ", "SPY"],
+      ["1d"],
+      dataStartDate,
+      config.endDate
+    );
+
+    const qqqCandles = benchmarkCandles.get("QQQ")?.["1d"] || [];
+    const spyCandles = benchmarkCandles.get("SPY")?.["1d"] || [];
 
     const qqqStart = getClosePriceOnDate(qqqCandles, dates[0]);
     const spyStart = getClosePriceOnDate(spyCandles, dates[0]);
     const qqqEnd = getClosePriceOnDate(qqqCandles, dates[dates.length - 1]);
     const spyEnd = getClosePriceOnDate(spyCandles, dates[dates.length - 1]);
 
+    // 分批获取股票数据（每批 10 只）
+    const batchSize = 10;
+    const allStockCandles = new Map<string, Partial<Record<Timeframe, Candle[]>>>();
+
+    for (let batch = 0; batch < stocksToTest.length; batch += batchSize) {
+      const batchStocks = stocksToTest.slice(batch, Math.min(batch + batchSize, stocksToTest.length));
+      
+      console.log(`[Backtest] Session ${config.sessionId}: Fetching data for batch ${Math.floor(batch / batchSize) + 1}/${Math.ceil(stocksToTest.length / batchSize)}`);
+      
+      const batchCandles = await getCandlesForStocks(
+        batchStocks,
+        allTf,
+        dataStartDate,
+        config.endDate
+      );
+      
+      batchCandles.forEach((candles, symbol) => {
+        allStockCandles.set(symbol, candles);
+      });
+      
+      // 更新进度
+      const progress = Math.round((batch + batchSize) / stocksToTest.length * 40);
+      await db.update(backtestSessions)
+        .set({ progress, currentDate: dates[Math.min(batch, dates.length - 1)] })
+        .where(eq(backtestSessions.id, config.sessionId));
+    }
+
     // 逐股票回测
     for (let si = 0; si < stocksToTest.length; si++) {
-      const symbol: string = stocksToTest[si]!;
-
-      // 获取该股票所有时间级别的历史数据（包含预热期）
-      const allCandlesByTf: Partial<Record<Timeframe, Candle[]>> = {};
-      for (const tf of allTf) {
-        const c = await getCandlesWithCache(symbol, tf, dataStartDate, config.endDate);
-        if (c.length > 0) allCandlesByTf[tf] = c;
-      }
+      const symbol = stocksToTest[si];
+      const allCandlesByTf = allStockCandles.get(symbol) || {};
 
       await backtestSymbol(symbol, config, allCandlesByTf, dates, state);
 
       // 更新进度
-      const progress = Math.round((si + 1) / stocksToTest.length * 80);
+      const progress = 40 + Math.round((si + 1) / stocksToTest.length * 40);
       await db.update(backtestSessions)
         .set({ progress, currentDate: dates[Math.min(si * 5, dates.length - 1)] })
         .where(eq(backtestSessions.id, config.sessionId));
     }
 
-    // 计算每日净值曲线
-    const dailyCandles: Record<string, Candle[]> = {};
-    for (const symbol of Array.from(state.positions.keys())) {
-      const c = await getCandlesWithCache(symbol, "1d", config.startDate, config.endDate);
-      if (c.length > 0) dailyCandles[symbol] = c;
-    }
-
+    // 计算每日净值曲线（使用已缓存的数据）
+    console.log(`[Backtest] Session ${config.sessionId}: Computing equity curve...`);
+    
     for (const date of dates) {
       let portfolioValue = state.balance;
-    state.positions.forEach((pos, symbol) => {
-      const c = dailyCandles[symbol] || [];
-      const price = getClosePriceOnDate(c, date) || pos.avgCost;
-      portfolioValue += pos.quantity * price;
-    });
+      state.positions.forEach((pos, symbol) => {
+        const c = allStockCandles.get(symbol)?.["1d"] || [];
+        const price = getClosePriceOnDate(c, date) || pos.avgCost;
+        portfolioValue += pos.quantity * price;
+      });
       state.equityCurve.push({ date, value: portfolioValue });
     }
 
     // 最终资产
     let finalBalance = state.balance;
     state.positions.forEach((pos, symbol) => {
-      const c = dailyCandles[symbol] || [];
+      const c = allStockCandles.get(symbol)?.["1d"] || [];
       const lastPrice = c.length > 0 ? c[c.length - 1].close : pos.avgCost;
       finalBalance += pos.quantity * lastPrice;
     });
@@ -610,6 +586,7 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
 
     // 保存交易记录
     if (state.trades.length > 0) {
+      console.log(`[Backtest] Session ${config.sessionId}: Saving ${state.trades.length} trades...`);
       // 批量插入（分批）
       const batchSize = 50;
       for (let i = 0; i < state.trades.length; i += batchSize) {
@@ -633,7 +610,7 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
       completedAt: new Date(),
     }).where(eq(backtestSessions.id, config.sessionId));
 
-    console.log(`[Backtest] Session ${config.sessionId} completed. Return: ${totalReturn.toFixed(2)}%`);
+    console.log(`[Backtest] Session ${config.sessionId} completed. Return: ${totalReturn.toFixed(2)}%, Trades: ${state.totalTrades}`);
   } catch (err: any) {
     console.error(`[Backtest] Session ${config.sessionId} failed:`, err);
     await db.update(backtestSessions).set({
@@ -642,6 +619,8 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
     }).where(eq(backtestSessions.id, config.sessionId));
   } finally {
     runningTasks.delete(config.sessionId);
+    // 清空缓存以释放内存
+    candleCache.clear();
   }
 }
 
