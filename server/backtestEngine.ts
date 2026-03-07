@@ -37,6 +37,8 @@ export interface BacktestConfig {
   ladderBreakTimeframes: Timeframe[];
   customStocks?: string[]; // 自选股票列表，为空时使用全部股票池
   strategy?: "standard" | "aggressive"; // 回测策略：标准（蓝梯突破黄梯）或激进（收盘站上蓝梯）
+  debug?: boolean; // 调试模式：输出详细的信号检测日志
+  debugSymbol?: string; // 调试特定股票（为空时输出所有股票）
 }
 
 // ============ 持仓状态 ============
@@ -321,6 +323,10 @@ async function backtestSymbol(
             position.dailySellTriggered
           );
 
+      if (config.debug && (!config.debugSymbol || config.debugSymbol === symbol)) {
+        console.log(`[DEBUG] ${symbol} @ ${date}: sellSig=${sellSig ? JSON.stringify(sellSig) : "null"}`);
+      }
+
       if (sellSig) {
         let sellQty = 0;
         let sellType = sellSig.type;
@@ -401,6 +407,10 @@ async function backtestSymbol(
           closePrice
         );
         if (stdBuySig) buySig = stdBuySig;
+      }
+
+      if (config.debug && (!config.debugSymbol || config.debugSymbol === symbol)) {
+        console.log(`[DEBUG] ${symbol} @ ${date}: buySig=${buySig ? JSON.stringify(buySig) : "null"}`);
       }
 
       if (buySig) {

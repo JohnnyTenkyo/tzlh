@@ -87,6 +87,9 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
   const [useCustomStocks, setUseCustomStocks] = useState(false);
   const [customStocksInput, setCustomStocksInput] = useState("");
   const [customStocksList, setCustomStocksList] = useState<string[]>([]);
+  // 调试模式
+  const [debug, setDebug] = useState(false);
+  const [debugSymbol, setDebugSymbol] = useState("");
 
   const handleAddCustomStock = () => {
     const symbols = customStocksInput.toUpperCase().split(/[,\s]+/).map((s: string) => s.trim()).filter((s: string) => /^[A-Z]{1,5}$/.test(s));
@@ -124,6 +127,8 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
       ladderBreakTimeframes: ladderTimeframes,
       customStocks: useCustomStocks ? customStocksList : undefined,
       strategy,
+      debug,
+      debugSymbol: debug ? debugSymbol : undefined,
     });
   };
 
@@ -372,6 +377,33 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
                     </button>
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+
+          {/* 调试模式 */}
+          <div className="space-y-3 p-3 bg-muted/50 rounded border border-border">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="debug"
+                checked={debug}
+                onChange={e => setDebug(e.target.checked)}
+                className="w-4 h-4 rounded border-border"
+              />
+              <Label htmlFor="debug" className="text-xs font-semibold cursor-pointer">
+                🐛 调试模式（输出信号检测日志）
+              </Label>
+            </div>
+            {debug && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">调试特定股票（可选，为空时输出所有）</Label>
+                <Input
+                  value={debugSymbol}
+                  onChange={e => setDebugSymbol(e.target.value.toUpperCase())}
+                  placeholder="如: AAPL"
+                  className="bg-input border-border text-sm"
+                />
               </div>
             )}
           </div>

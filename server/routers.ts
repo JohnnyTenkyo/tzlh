@@ -175,6 +175,8 @@ export const appRouter = router({
         ladderBreakTimeframes: z.array(z.string()).min(1),
         customStocks: z.array(z.string()).optional(),
         strategy: z.enum(["standard", "aggressive"]).optional(),
+        debug: z.boolean().optional(),
+        debugSymbol: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const localUser = getLocalUser(ctx);
@@ -217,6 +219,8 @@ export const appRouter = router({
             ladderBreakTimeframes: input.ladderBreakTimeframes as Timeframe[],
             customStocks: cleanCustomStocks || undefined,
             strategy: (input.strategy || "standard") as "standard" | "aggressive",
+            debug: input.debug || false,
+            debugSymbol: input.debugSymbol || undefined,
           }).catch(err => console.error("[Backtest] Error:", err));
         }, 100);
 
