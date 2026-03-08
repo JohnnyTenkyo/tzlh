@@ -43,21 +43,22 @@ export function calculateEMA(data: number[], period: number): number[] {
 // ============ 黄蓝梯子计算 ============
 export interface LadderResult {
   // 蓝色梯子（短周期EMA带）
-  blueUp: number[];   // EMA(24) - 上边缘
-  blueDn: number[];   // EMA(23) - 下边缘
+  blueUp: number[];   // EMA(H, 26) - 上边缘
+  blueDn: number[];   // EMA(L, 26) - 下边缘
   // 黄色梯子（长周期EMA带）
-  yellowUp: number[]; // EMA(89) - 上边缘
-  yellowDn: number[]; // EMA(90) - 下边缘
+  yellowUp: number[]; // EMA(H, 89) - 上边缘
+  yellowDn: number[]; // EMA(L, 89) - 下边缘
 }
 
 export function calculateLadder(candles: Candle[]): LadderResult {
-  const closes = candles.map(c => c.close);
+  const highs = candles.map(c => c.high);
+  const lows = candles.map(c => c.low);
 
   return {
-    blueUp: calculateEMA(closes, 24),
-    blueDn: calculateEMA(closes, 23),
-    yellowUp: calculateEMA(closes, 89),
-    yellowDn: calculateEMA(closes, 90),
+    blueUp: calculateEMA(highs, 26),
+    blueDn: calculateEMA(lows, 26),
+    yellowUp: calculateEMA(highs, 89),
+    yellowDn: calculateEMA(lows, 89),
   };
 }
 
@@ -675,7 +676,7 @@ export function calculate4321Score(
 
 // ============ 买入信号检测（回测用） ============
 export interface BuySignal {
-  type: "first_buy" | "second_buy";
+  type: "first_buy" | "second_buy" | "third_buy";
   timeframe: Timeframe;  // 买入时所用的蓝梯级别（最低级别）
   cdTimeframe: Timeframe; // CD信号级别描述
   reason: string;
@@ -739,6 +740,26 @@ export function detectBuySignal(
         timeframe: tf,
         cdTimeframe: cdTimeframes[cdTimeframes.length - 1] || tf,
         reason: `${cdDesc}级别CD抄底信号(DXDX) + ${tf}级别蓝梯下边缘高于黄梯上边缘（第二买点，买入50%仓位）`,
+      };
+    }
+  }
+
+  // 第三买点检查：蓝梯在黄梯下方（弱势反弹）
+  // 条件：蓝梯上轨 < 黄梯下轨
+  for (const tf of sortedLadderTfs) {
+    const c = candles[tf];
+    if (!c || c.length < 90) continue;
+
+    const ladder = calculateLadder(c);
+    const sig = getLadderSignal(c, ladder);
+
+    // 蓝梯上轨 < 黄梯下轨（蓝梯完全在黄梯下方）
+    if (sig.blueUpBelowYellowDn) {
+      return {
+        type: "third_buy",
+        timeframe: tf,
+        cdTimeframe: cdTimeframes[cdTimeframes.length - 1] || tf,
+        reason: `${cdDesc}级别CD抄底信号(DXDX) + ${tf}级别蓝梯在黄梯下方（第三买点，买入50%仓位）`,
       };
     }
   }
