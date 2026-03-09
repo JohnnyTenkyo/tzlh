@@ -26,7 +26,7 @@ async function testHistoricalBacktest() {
     startDate: "2024-03-01",
     endDate: "2024-04-30",
     marketCapFilter: "100b" as any,
-    cdSignalTimeframes: JSON.stringify(["1d"]),
+    cdSignalTimeframes: JSON.stringify(["1d"]), // 已弃用
     cdLookbackBars: 10,
     ladderBreakTimeframes: JSON.stringify(["30m"]),
     customStocks: JSON.stringify(["TSLA"]),
@@ -48,11 +48,9 @@ async function testHistoricalBacktest() {
     startDate: "2024-03-01",
     endDate: "2024-04-30",
     marketCapFilter: "all" as any,
-    cdSignalTimeframes: ["1d"],
-    cdLookbackBars: 10,
-    ladderBreakTimeframes: ["30m"],
+    ladderTimeframe: "30m" as Timeframe,
+    cdScoreThreshold: 60,
     customStocks: ["TSLA"],
-    strategy: "standard" as const,
   });
 
   // 查询结果

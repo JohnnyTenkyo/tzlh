@@ -91,3 +91,24 @@
 - [x] 修改 Backtest.tsx 中的默认配置：CD 改为 [1d]，梯子改为 [1h, 30m]，cdLookback 改为 10
 - [x] 修改默认日期范围：2025-12-01 到 2026-03-07（方便测试）
 - [x] 所有 28 个单元测试仍然通过
+
+## 第十八轮重构（CD 抄底分数化机制）
+- [ ] 实现 calculateCDScore 函数：计算各级别 CD 抄底分数（30m=1, 1h=2, 4h=3, 1d=4, 1w=5）
+- [ ] 实现时间衰减逻辑：距离上一个抄底越近，分数越高
+- [ ] 修改 detectBuySignal：蓝梯突破时检查 CD 分数是否 >= 阈值
+- [ ] 修改 BacktestConfig：移除 cdSignalTimeframes/cdLookbackBars，添加 cdScoreThreshold
+- [ ] 修改 routers.ts API：更新 createSession 参数
+- [ ] 修改前端 UI：移除 CD 级别和 Lookback 选择，添加 CD 分数阈值滑块
+- [ ] 测试新的买卖逻辑
+- [ ] 所有单元测试通过
+
+## 第十九轮完成（CD 分数化机制完整集成）
+- [x] 实现 calculateCDScore 函数：计算各级别 CD 抄底分数（总分 100 分，严格递增）
+- [x] 实现 detectFirstBuySignal 函数：基于梯子级别的买入信号检测
+- [x] 实现 detectFirstSellSignal 函数：基于梯子级别的卖出信号检测
+- [x] 修改 BacktestConfig：使用 ladderTimeframe + cdScoreThreshold
+- [x] 修改 backtestEngine.ts：集成新的买卖信号检测函数
+- [x] 修改 routers.ts API：更新 createSession 参数
+- [x] 修改 testHistoricalBacktest.ts：适配新参数
+- [x] 所有 28 个单元测试通过
+- [ ] 修改前端 UI：Backtest.tsx 更新参数配置界面

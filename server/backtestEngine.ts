@@ -2,6 +2,8 @@
  * 自动回测引擎
  * 基于黄蓝梯子 + CD抄底指标的买卖逻辑
  */
+import { detectFirstBuySignal, detectFirstSellSignal, detectSecondBuySignal, detectSecondSellSignal } from "./buySignalWithScore";
+import { calculateCDScore } from "./cdScore";
 import { fetchHistoricalCandles, fetchQuote } from "./marketData";
 import {
   Candle,
@@ -32,11 +34,9 @@ export interface BacktestConfig {
   startDate: string; // YYYY-MM-DD
   endDate: string;   // YYYY-MM-DD
   marketCapFilter: MarketCapFilter;
-  cdSignalTimeframes: Timeframe[];
-  cdLookbackBars: number;
-  ladderBreakTimeframes: Timeframe[];
+  ladderTimeframe: Timeframe; // 梯子级别（单选）
+  cdScoreThreshold: number; // CD 分数阈值（0-100）
   customStocks?: string[]; // 自选股票列表，为空时使用全部股票池
-  strategy?: "standard" | "aggressive"; // 回测策略：标准（蓝梯突破黄梯）或激进（收盘站上蓝梯）
   debug?: boolean; // 调试模式：输出详细的信号检测日志
   debugSymbol?: string; // 调试特定股票（为空时输出所有股票）
 }
@@ -305,23 +305,16 @@ async function backtestSymbol(
         }
       }
 
-      // 检查卖出信号（根据策略选择对应卖出函数）
-      const aggressiveLadderTf = config.ladderBreakTimeframes.length > 0
-        ? config.ladderBreakTimeframes[0] as Timeframe
-        : "30m" as Timeframe;
-      const sellSig = config.strategy === "aggressive"
-        ? detectAggressiveSellSignal(
-            candlesUpTo as Partial<Record<Timeframe, Candle[]>>,
-            position.entryTimeframe,
-            closePrice,
-            position.dailySellTriggered
-          )
-        : detectSellSignal(
-            candlesUpTo as Partial<Record<Timeframe, Candle[]>>,
-            position.entryTimeframe,
-            closePrice,
-            position.dailySellTriggered
-          );
+      // 检查卖出信号
+      const firstSell = detectFirstSellSignal(
+        candlesUpTo as Partial<Record<Timeframe, Candle[]>>,
+        config.ladderTimeframe
+      );
+      const sellSig = firstSell ? {
+        type: firstSell.type,
+        timeframe: firstSell.timeframe,
+        reason: firstSell.reason,
+      } : null;
 
       if (config.debug && (!config.debugSymbol || config.debugSymbol === symbol)) {
         console.log(`[DEBUG] ${symbol} @ ${date}: sellSig=${sellSig ? JSON.stringify(sellSig) : "null"}`);
@@ -331,9 +324,9 @@ async function backtestSymbol(
         let sellQty = 0;
         let sellType = sellSig.type;
 
-        if (sellSig.type === "first_sell" || sellSig.type === "daily_sell_half") {
+        if (sellSig.type === "first_sell") {
           sellQty = position.quantity * 0.5;
-        } else if (sellSig.type === "second_sell" || sellSig.type === "daily_sell_all") {
+        } else if (sellSig.type === "second_sell") {
           sellQty = position.quantity;
         }
 
@@ -360,10 +353,7 @@ async function backtestSymbol(
           state.balance += amount;
           position.quantity -= actualQty;
 
-          if (sellSig.type === "daily_sell_half") {
-            position.dailySellTriggered = true;
-            position.dailySellDate = date;
-          }
+          // 新的卖出逻辑不需要 dailySellTriggered
 
           if (position.quantity <= 0.001) {
             if (pnl > 0) state.winTrades++;
@@ -384,29 +374,18 @@ async function backtestSymbol(
       // 激进策略与标准策略买入信号检测
       let buySig: { type: string; timeframe: Timeframe; reason: string } | null = null;
 
-      if (config.strategy === "aggressive") {
-        // 激进策略：CD信号后，30分钟收盘价站上蓝梯即买入
-        const aggressiveLadderTf = config.ladderBreakTimeframes.length > 0
-          ? config.ladderBreakTimeframes[0] as Timeframe
-          : "30m" as Timeframe;
-        const aggBuySig = detectAggressiveBuySignal(
-          candlesUpTo as Partial<Record<Timeframe, Candle[]>>,
-          config.cdSignalTimeframes,
-          aggressiveLadderTf,
-          config.cdLookbackBars,
-          closePrice
-        );
-        if (aggBuySig) buySig = aggBuySig;
-      } else {
-        // 标准策略：蓝梯突破黄梯
-        const stdBuySig = detectBuySignal(
-          candlesUpTo as Partial<Record<Timeframe, Candle[]>>,
-          config.cdSignalTimeframes,
-          config.ladderBreakTimeframes,
-          config.cdLookbackBars,
-          closePrice
-        );
-        if (stdBuySig) buySig = stdBuySig;
+      // 基于 CD 分数的买入信号检测
+      const firstBuy = detectFirstBuySignal(
+        candlesUpTo as Partial<Record<Timeframe, Candle[]>>,
+        config.ladderTimeframe,
+        config.cdScoreThreshold
+      );
+      if (firstBuy) {
+        buySig = {
+          type: firstBuy.type,
+          timeframe: firstBuy.timeframe,
+          reason: firstBuy.reason,
+        };
       }
 
       if (config.debug && (!config.debugSymbol || config.debugSymbol === symbol)) {
@@ -497,11 +476,18 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
       lossTrades: 0,
     };
 
-    // 所有需要的时间级别
+    // 所有需要的时间级别（添加所有用于 CD 分数计算的级别）
     const allTf = Array.from(new Set([
-      ...config.cdSignalTimeframes,
-      ...config.ladderBreakTimeframes,
+      "5m" as Timeframe,
+      "15m" as Timeframe,
+      "30m" as Timeframe,
+      "1h" as Timeframe,
+      "2h" as Timeframe,
+      "3h" as Timeframe,
+      "4h" as Timeframe,
       "1d" as Timeframe,
+      "1w" as Timeframe,
+      config.ladderTimeframe,
     ]));
 
     // 计算指标预热日期（往前多取180天用于EMA/MACD预热）
