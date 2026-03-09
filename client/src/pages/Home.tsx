@@ -207,6 +207,11 @@ export default function Home() {
   const scanDate = data?.scanDate || "";
   const fromCache = data?.fromCache || false;
 
+  // 按大中小盘分类
+  const largeCapResults = results.filter(r => r.marketCap === "500b" || r.marketCap === "100b");
+  const midCapResults = results.filter(r => r.marketCap === "50b" || r.marketCap === "10b");
+  const smallCapResults = results.filter(r => r.marketCap === "1b" || r.marketCap === "none");
+
   return (
     <Layout>
       <div className="container py-6 max-w-4xl">
@@ -301,7 +306,7 @@ export default function Home() {
             </CardContent>
           </Card>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-6">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm text-muted-foreground">
                 共找到 <span className="text-foreground font-medium">{results.length}</span> 只有效信号
@@ -314,9 +319,51 @@ export default function Home() {
                 </Button>
               )}
             </div>
-            {results.map((item, idx) => (
-              <RecommendationCard key={item.symbol} item={item} rank={idx + 1} />
-            ))}
+
+            {/* 大盘股 */}
+            {largeCapResults.length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-primary"></span>
+                  大盘股 ({largeCapResults.length})
+                </h3>
+                <div className="space-y-2">
+                  {largeCapResults.map((item, idx) => (
+                    <RecommendationCard key={item.symbol} item={item} rank={idx + 1} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 中盘股 */}
+            {midCapResults.length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-yellow-400"></span>
+                  中盘股 ({midCapResults.length})
+                </h3>
+                <div className="space-y-2">
+                  {midCapResults.map((item, idx) => (
+                    <RecommendationCard key={item.symbol} item={item} rank={largeCapResults.length + idx + 1} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 小盘股 */}
+            {smallCapResults.length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-green-400"></span>
+                  小盘股 ({smallCapResults.length})
+                </h3>
+                <div className="space-y-2">
+                  {smallCapResults.map((item, idx) => (
+                    <RecommendationCard key={item.symbol} item={item} rank={largeCapResults.length + midCapResults.length + idx + 1} />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

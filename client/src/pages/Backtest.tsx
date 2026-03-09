@@ -264,15 +264,25 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
             <h3 className="text-sm font-semibold text-foreground border-b border-border pb-1">蓝梯突破黄梯配置</h3>
             <div className="space-y-1.5">
               <Label className="text-xs">
-                蓝梯突破级别（多选，需同时满足）
-                <span className="text-muted-foreground ml-1">已选: {ladderTimeframes.join(", ") || "无"}</span>
+                蓝梯突破级别
+                <span className="text-muted-foreground ml-1">已选: {ladderTimeframe}</span>
               </Label>
-              <MultiSelect
-                options={TIMEFRAMES}
-                selected={ladderTimeframes}
-                onChange={setLadderTimeframes}
-                labels={TIMEFRAME_LABELS}
-              />
+              <div className="flex flex-wrap gap-2">
+                {TIMEFRAMES.map(tf => (
+                  <button
+                    key={tf}
+                    type="button"
+                    onClick={() => setLadderTimeframe(tf)}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all border ${
+                      ladderTimeframe === tf
+                        ? "bg-primary/20 border-primary text-primary"
+                        : "bg-muted border-border text-muted-foreground hover:border-primary/50"
+                    }`}
+                  >
+                    {TIMEFRAME_LABELS[tf] || tf}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="text-xs text-muted-foreground bg-muted/50 rounded p-3 space-y-1">
               <p className="font-medium text-foreground">买入逻辑说明：</p>

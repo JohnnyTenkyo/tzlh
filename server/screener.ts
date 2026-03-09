@@ -75,7 +75,7 @@ export async function runDailyScan(forceRefresh = false): Promise<AggressiveScor
 
   const results: AggressiveScore[] = [];
   const batchSize = 5;
-  const stocksToScan = US_STOCKS.slice(0, 200).map(s => s.symbol);
+  const stocksToScan = US_STOCKS.map(s => s.symbol);
 
   for (let i = 0; i < stocksToScan.length; i += batchSize) {
     const batch = stocksToScan.slice(i, i + batchSize);
