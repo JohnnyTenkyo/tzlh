@@ -676,7 +676,8 @@ export function calculate4321Score(
 
 // ============ 买入信号检测（回测用） ============
 export interface BuySignal {
-  type: "first_buy" | "second_buy" | "third_buy";
+  type: "first_buy" | "second_buy";
+  cdSignalIndex: number; // CD 信号出现时的 K 线索引（用于计算 20 根 K 线观察期）
   timeframe: Timeframe;  // 买入时所用的蓝梯级别（最低级别）
   cdTimeframe: Timeframe; // CD信号级别描述
   reason: string;
@@ -692,65 +693,82 @@ export function detectBuySignal(
   cdLookback: number,
   currentPrice: number
 ): BuySignal | null {
-  // 步骤1：找到用户选择的蓝梯级别中最低的级别（用于买入判断）
-  // 按级别从小到大排序，取最小的级别
+  /**
+   * 买入逻辑：
+   * 1. CD抄底信号出现 → 进入观察期（10根K线）
+   * 2. 第一买点：梯子级收盘价 > 蓝梯下边缘 （站上蓝梯下边缘）
+   * 3. 第二买点：蓝梯下边缘 > 黄梯上边缘
+   */
+
+  // 步骤1：检查 CD 信号是否存在
+  let hasCDSignal = false;
+  let cdIndex = -1;
+  let cdTimeframe: Timeframe | null = null;
+
+  for (const tf of cdTimeframes) {
+    const c = candles[tf];
+    if (!c || c.length < 60) continue;
+    if (hasCDSignalInRange(c, cdLookback)) {
+      hasCDSignal = true;
+      // 找到 CD 信号的最新索引
+      cdIndex = c.length - 1;
+      cdTimeframe = tf;
+      break;
+    }
+  }
+
+  if (!hasCDSignal || !cdTimeframe) return null;
+
+  // 步骤2：找到用户选择的蓝梯级别中最低的级别（用于买入判断）
   const sortedLadderTfs = [...ladderTimeframes].sort(
     (a, b) => TF_ORDER.indexOf(a) - TF_ORDER.indexOf(b)
   );
 
+  // 步骤3：检查第一买点：梯子级收盘价 > 蓝梯下边缘（站上蓝梯下边缘）
+  // 注：需要检查 CD 信号后 10 根 K 线内是否有收盘价站上蓝梯下边缘的 K 线
   for (const tf of sortedLadderTfs) {
     const c = candles[tf];
     if (!c || c.length < 90) continue;
 
     const ladder = calculateLadder(c);
-    const sig = getLadderSignal(c, ladder);
+    
+    // 找到对应于 CD 信号时间的梯子级 K 线索引
+    // 注：CD 信号是按照 CD 信号的时间框查找的，需要找到对应的梯子级时间
+    // 简化：直接使用最新的 K 线（假设所有级别的最新 K 线是同一时间）
+    const n = c.length - 1;
+    const blueDn = ladder.blueDn[n];
+    const yellowUp = ladder.yellowUp[n];
+    const close = c[n].close;
 
-    // 第一买点：最低级别蓝梯上边缘刚刚突破黄梯上边缘
-    // （前一根K线蓝梯上边缘 <= 黄梯上边缘，当前蓝梯上边缘 > 黄梯上边缘）
-    if (sig.blueCrossYellowUp) {
+    // 第一买点：收盘价 > 蓝梯下边缘（站上蓝梯下边缘）
+    if (close > blueDn) {
       return {
         type: "first_buy",
+        cdSignalIndex: cdIndex,
         timeframe: tf,
-        cdTimeframe: tf,
-        reason: `${tf}级别蓝梯上边缘刚刚突破黄梯上边缘（第一买点，买入50%仓位）`,
+        cdTimeframe: cdTimeframe,
+        reason: `CD抄底信号 + ${tf}级别收盘价 (${close.toFixed(2)}) > 蓝梯下边缘 (${blueDn.toFixed(2)}) （第一买点，买入50%仓位）`,
       };
     }
   }
 
-  // 第二买点检查：最低级别蓝梯下边缘 > 黄梯上边缘
+  // 步骤4：检查第二买点：蓝梯下边缘 > 黄梯上边缘
   for (const tf of sortedLadderTfs) {
     const c = candles[tf];
     if (!c || c.length < 90) continue;
 
     const ladder = calculateLadder(c);
-    const sig = getLadderSignal(c, ladder);
+    const n = c.length - 1;
+    const blueDn = ladder.blueDn[n];
+    const yellowUp = ladder.yellowUp[n];
 
-    if (sig.blueDnAboveYellowUp) {
+    if (blueDn > yellowUp) {
       return {
         type: "second_buy",
+        cdSignalIndex: cdIndex,
         timeframe: tf,
-        cdTimeframe: tf,
-        reason: `${tf}级别蓝梯下边缘高于黄梯上边缘（第二买点，买入50%仓位）`,
-      };
-    }
-  }
-
-  // 第三买点检查：蓝梯在黄梯下方（弱势反弹）
-  // 条件：蓝梯上轨 < 黄梯下轨
-  for (const tf of sortedLadderTfs) {
-    const c = candles[tf];
-    if (!c || c.length < 90) continue;
-
-    const ladder = calculateLadder(c);
-    const sig = getLadderSignal(c, ladder);
-
-    // 蓝梯上轨 < 黄梯下轨（蓝梯完全在黄梯下方）
-    if (sig.blueUpBelowYellowDn) {
-      return {
-        type: "third_buy",
-        timeframe: tf,
-        cdTimeframe: tf,
-        reason: `${tf}级别蓝梯在黄梯下方（第三买点，买入50%仓位）`,
+        cdTimeframe: cdTimeframe,
+        reason: `CD抄底信号 + ${tf}级别蓝梯下边缘 (${blueDn.toFixed(2)}) > 黄梯上边缘 (${yellowUp.toFixed(2)}) （第二买点，买入50%仓位）`,
       };
     }
   }
@@ -769,45 +787,47 @@ export function detectSellSignal(
   candles: TimeframeCandles,
   entryTimeframe: Timeframe,
   currentPrice: number,
-  dailySellTriggered: boolean
+  dailySellTriggered: boolean,
+  firstBuyPrice?: number,
+  secondBuyPrice?: number
 ): SellSignal | null {
   /**
    * 卖出规则：
-   * - 第一卖点：买入级别的上一级别K线收盘价跌破蓝梯下边缘 → 卖出50%
-   * - 第二卖点：买入级别蓝梯上边缘 < 黄梯下边缘 → 卖出50%
+   * - 第一卖点：收盘价跌破蓝梯下边缘 → 卖出50%（第一买点的止损）
+   * - 第二卖点：蓝梯上边缘 < 黄梯下边缘 → 卖出50%（第二买点的止损）
    * - 日线卖出：日线DBJGXC信号 + 日线收盘跌破蓝梯下边缘 → 分批卖出
    */
-  const tfOrder: Timeframe[] = ["15m", "30m", "1h", "2h", "3h", "4h", "1d", "1w"];
-  const entryIdx = tfOrder.indexOf(entryTimeframe);
-
-  // 卖出条件1：买入级别的上一级别K线收盘价跌破蓝梯下边缘（卖偐50%）
-  // 注：上一级别是买入级别的上一级，不是上两级
-  if (entryIdx >= 0 && entryIdx < tfOrder.length - 1) {
-    const upperTf = tfOrder[entryIdx + 1] as Timeframe;
-    const upperCandles = candles[upperTf];
-    if (upperCandles && upperCandles.length >= 90) {
-      const ladder = calculateLadder(upperCandles);
-      const sig = getLadderSignal(upperCandles, ladder);
-      if (sig.closeBelowBlueDn) {
-        return {
-          type: "first_sell",
-          timeframe: upperTf,
-          reason: `买入级别${entryTimeframe}的上一级别${upperTf}K线收盘价（${currentPrice.toFixed(2)}）跌破蓝梯下边缘（${sig.latestBlueDn.toFixed(2)}），卖出50%仓位`,
-        };
-      }
-    }
-  }
-
-  // 卖出条件2：当前级别蓝梯上边缘低于黄梯下边缘（卖50%）
+  // 第一卖点：收盘价跌破蓝梯下边缘（第一买点的止损）
   const entryCandles = candles[entryTimeframe];
   if (entryCandles && entryCandles.length >= 90) {
     const ladder = calculateLadder(entryCandles);
-    const sig = getLadderSignal(entryCandles, ladder);
-    if (sig.blueUpBelowYellowDn) {
+    const n = entryCandles.length - 1;
+    const blueDn = ladder.blueDn[n];
+    const close = entryCandles[n].close;
+
+    // 第一卖点：收盘价跌破蓝梯下边缘
+    if (close < blueDn) {
+      return {
+        type: "first_sell",
+        timeframe: entryTimeframe,
+        reason: `${entryTimeframe}级别收盘价 (${close.toFixed(2)}) 跌破蓝梯下边缘 (${blueDn.toFixed(2)})\uff0c第一买点止损\uff0c卖出50%仓位`,
+      };
+    }
+  }
+
+  // 第二卖点：蓝梯上边缘 < 黄梯下边缘（第二买点的止损）
+  if (entryCandles && entryCandles.length >= 90) {
+    const ladder = calculateLadder(entryCandles);
+    const n = entryCandles.length - 1;
+    const blueUp = ladder.blueUp[n];
+    const yellowDn = ladder.yellowDn[n];
+
+    // 第二卖点：蓝梯上边缘 < 黄梯下边缘
+    if (blueUp < yellowDn) {
       return {
         type: "second_sell",
         timeframe: entryTimeframe,
-        reason: `${entryTimeframe}级别蓝梯上边缘（${sig.latestBlueUp.toFixed(2)}）低于黄梯下边缘（${sig.latestYellowDn.toFixed(2)}），卖出50%仓位`,
+        reason: `${entryTimeframe}级别蓝梯上边缘 (${blueUp.toFixed(2)}) < 黄梯下边缘 (${yellowDn.toFixed(2)})\uff0c第二买点止损\uff0c卖出50%仓位`,
       };
     }
   }
