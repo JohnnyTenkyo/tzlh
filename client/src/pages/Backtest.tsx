@@ -75,12 +75,12 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [initialBalance, setInitialBalance] = useState("100000");
-  const [startDate, setStartDate] = useState("2023-01-01");
-  const [endDate, setEndDate] = useState("2024-12-31");
+  const [startDate, setStartDate] = useState("2025-12-01");
+  const [endDate, setEndDate] = useState("2026-03-07");
   const [marketCap, setMarketCap] = useState<string>("none");
-  const [cdTimeframes, setCdTimeframes] = useState<string[]>(["4h", "1h"]);
-  const [cdLookback, setCdLookback] = useState(5);
-  const [ladderTimeframes, setLadderTimeframes] = useState<string[]>(["30m"]);
+  const [cdTimeframes, setCdTimeframes] = useState<string[]>(["1d"]);
+  const [cdLookback, setCdLookback] = useState(10);
+  const [ladderTimeframes, setLadderTimeframes] = useState<string[]>(["1h", "30m"]);
   // 策略选择
   const [strategy, setStrategy] = useState<"standard" | "aggressive">("standard");
   // 自选股票
