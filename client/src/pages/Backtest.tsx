@@ -1,3 +1,5 @@
+"use client";
+
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
@@ -80,6 +82,8 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
   const [marketCap, setMarketCap] = useState<string>("none");
   const [ladderTimeframe, setLadderTimeframe] = useState<string>("30m");
   const [cdScoreThreshold, setCdScoreThreshold] = useState(60);
+  // 策略选择
+  const [strategy, setStrategy] = useState<"standard" | "aggressive">("standard");
   // 自选股票
   const [useCustomStocks, setUseCustomStocks] = useState(false);
   const [customStocksInput, setCustomStocksInput] = useState("");
@@ -120,6 +124,7 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
       marketCapFilter: marketCap as any,
       ladderTimeframe,
       cdScoreThreshold,
+      strategy,
       customStocks: useCustomStocks ? customStocksList : undefined,
       debug,
       debugSymbol: debug ? debugSymbol : undefined,

@@ -172,6 +172,7 @@ export const appRouter = router({
         marketCapFilter: z.enum(["none", "1b", "10b", "50b", "100b", "500b"]),
         ladderTimeframe: z.string(),
         cdScoreThreshold: z.number().min(0).max(100),
+        strategy: z.enum(["standard", "aggressive"]).optional(),
         customStocks: z.array(z.string()).optional(),
         debug: z.boolean().optional(),
         debugSymbol: z.string().optional(),
@@ -198,7 +199,7 @@ export const appRouter = router({
           cdLookbackBars: input.cdScoreThreshold,
           ladderBreakTimeframes: JSON.stringify([input.ladderTimeframe]),
           customStocks: cleanCustomStocks ? JSON.stringify(cleanCustomStocks) : null,
-          strategy: "standard",
+          strategy: input.strategy || "standard",
           status: "pending",
         });
 
