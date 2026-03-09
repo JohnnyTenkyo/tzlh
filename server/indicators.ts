@@ -692,20 +692,11 @@ export function detectBuySignal(
   cdLookback: number,
   currentPrice: number
 ): BuySignal | null {
-  // 步骤1：检查所有用户选择的CD信号级别是否都满足（多选时需同时满足）
-  for (const tf of cdTimeframes) {
-    const c = candles[tf];
-    if (!c || c.length < 60) return null;
-    if (!hasCDSignalInRange(c, cdLookback)) return null;
-  }
-
-  // 步骤2：找到用户选择的蓝梯级别中最低的级别（用于买入判断）
+  // 步骤1：找到用户选择的蓝梯级别中最低的级别（用于买入判断）
   // 按级别从小到大排序，取最小的级别
   const sortedLadderTfs = [...ladderTimeframes].sort(
     (a, b) => TF_ORDER.indexOf(a) - TF_ORDER.indexOf(b)
   );
-
-  const cdDesc = cdTimeframes.join("/");
 
   for (const tf of sortedLadderTfs) {
     const c = candles[tf];
@@ -720,8 +711,8 @@ export function detectBuySignal(
       return {
         type: "first_buy",
         timeframe: tf,
-        cdTimeframe: cdTimeframes[cdTimeframes.length - 1] || tf,
-        reason: `${cdDesc}级别CD抄底信号(DXDX) + ${tf}级别蓝梯上边缘刚刚突破黄梯上边缘（第一买点，买入50%仓位）`,
+        cdTimeframe: tf,
+        reason: `${tf}级别蓝梯上边缘刚刚突破黄梯上边缘（第一买点，买入50%仓位）`,
       };
     }
   }
@@ -738,8 +729,8 @@ export function detectBuySignal(
       return {
         type: "second_buy",
         timeframe: tf,
-        cdTimeframe: cdTimeframes[cdTimeframes.length - 1] || tf,
-        reason: `${cdDesc}级别CD抄底信号(DXDX) + ${tf}级别蓝梯下边缘高于黄梯上边缘（第二买点，买入50%仓位）`,
+        cdTimeframe: tf,
+        reason: `${tf}级别蓝梯下边缘高于黄梯上边缘（第二买点，买入50%仓位）`,
       };
     }
   }
@@ -758,8 +749,8 @@ export function detectBuySignal(
       return {
         type: "third_buy",
         timeframe: tf,
-        cdTimeframe: cdTimeframes[cdTimeframes.length - 1] || tf,
-        reason: `${cdDesc}级别CD抄底信号(DXDX) + ${tf}级别蓝梯在黄梯下方（第三买点，买入50%仓位）`,
+        cdTimeframe: tf,
+        reason: `${tf}级别蓝梯在黄梯下方（第三买点，买入50%仓位）`,
       };
     }
   }
