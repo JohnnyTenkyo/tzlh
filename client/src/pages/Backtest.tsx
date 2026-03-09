@@ -536,7 +536,6 @@ export default function Backtest() {
               <p className="text-sm text-muted-foreground mb-4">
                 创建第一个回测存档，验证黄蓝梯子策略的历史表现
               </p>
-              <CreateBacktestDialog onCreated={refetch} />
             </CardContent>
           </Card>
         ) : (
