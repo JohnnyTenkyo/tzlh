@@ -199,3 +199,24 @@ export function isHoldingConditionMet(
   // 蓝梯在黄梯之上：蓝梯上边缘 > 黄梯下边缘
   return blueUp > yellowDn;
 }
+
+/**
+ * 检测第二买点后的持有条件：蓝梯在黄梯之上持有
+ * 返回 true 表示继续持有，false 表示应该卖出
+ */
+export function shouldHoldAfterSecondBuy(
+  candles: Partial<Record<Timeframe, Candle[]>>,
+  ladderTimeframe: Timeframe
+): boolean {
+  const ladderCandles = candles[ladderTimeframe];
+  if (!ladderCandles || ladderCandles.length < 90) return true; // 数据不足时继续持有
+
+  const ladder = calculateLadder(ladderCandles);
+  const n = ladderCandles.length;
+
+  const blueDn = ladder.blueDn[n - 1];
+  const yellowUp = ladder.yellowUp[n - 1];
+
+  // 蓝梯在黄梯之上：蓝梯下边缘 > 黄梯上边缘
+  return blueDn > yellowUp;
+}

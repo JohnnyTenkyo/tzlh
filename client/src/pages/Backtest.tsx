@@ -78,11 +78,8 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
   const [startDate, setStartDate] = useState("2025-12-01");
   const [endDate, setEndDate] = useState("2026-03-07");
   const [marketCap, setMarketCap] = useState<string>("none");
-  const [cdTimeframes, setCdTimeframes] = useState<string[]>(["1d"]);
-  const [cdLookback, setCdLookback] = useState(10);
-  const [ladderTimeframes, setLadderTimeframes] = useState<string[]>(["1h", "30m"]);
-  // 策略选择
-  const [strategy, setStrategy] = useState<"standard" | "aggressive">("standard");
+  const [ladderTimeframe, setLadderTimeframe] = useState<string>("30m");
+  const [cdScoreThreshold, setCdScoreThreshold] = useState(60);
   // 自选股票
   const [useCustomStocks, setUseCustomStocks] = useState(false);
   const [customStocksInput, setCustomStocksInput] = useState("");
@@ -112,8 +109,7 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
 
   const handleCreate = () => {
     if (!name.trim()) { toast.error("请填写存档名称"); return; }
-    if (cdTimeframes.length === 0) { toast.error("请选择CD信号级别"); return; }
-    if (ladderTimeframes.length === 0) { toast.error("请选择蓝梯突破级别"); return; }
+    if (!ladderTimeframe) { toast.error("请选择梯子级别"); return; }
     if (useCustomStocks && customStocksList.length === 0) { toast.error("请添加至少一只自选股票"); return; }
 
     createMutation.mutate({
@@ -122,11 +118,9 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
       startDate,
       endDate,
       marketCapFilter: marketCap as any,
-      cdSignalTimeframes: cdTimeframes,
-      cdLookbackBars: cdLookback,
-      ladderBreakTimeframes: ladderTimeframes,
+      ladderTimeframe,
+      cdScoreThreshold,
       customStocks: useCustomStocks ? customStocksList : undefined,
-      strategy,
       debug,
       debugSymbol: debug ? debugSymbol : undefined,
     });
@@ -206,36 +200,61 @@ function CreateBacktestDialog({ onCreated }: { onCreated: () => void }) {
             </div>
           </div>
 
-          {/* CD信号配置 */}
+          {/* CD抄底分数阈值配置 */}
           <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-foreground border-b border-border pb-1">CD抄底信号配置</h3>
+            <h3 className="text-sm font-semibold text-foreground border-b border-border pb-1">CD抄底分数阈值</h3>
             <div className="space-y-1.5">
               <Label className="text-xs">
-                CD信号级别（多选，需同时满足）
-                <span className="text-muted-foreground ml-1">已选: {cdTimeframes.join(", ") || "无"}</span>
-              </Label>
-              <MultiSelect
-                options={TIMEFRAMES}
-                selected={cdTimeframes}
-                onChange={setCdTimeframes}
-                labels={TIMEFRAME_LABELS}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">
-                K线范围：过去 <span className="text-primary font-bold">{cdLookback}</span> 根K线内出现CD信号
+                分数阈值：<span className="text-primary font-bold">{cdScoreThreshold}</span> / 100
               </Label>
               <Slider
-                value={[cdLookback]}
-                onValueChange={([v]) => setCdLookback(v)}
-                min={1}
-                max={30}
+                value={[cdScoreThreshold]}
+                onValueChange={([v]) => setCdScoreThreshold(v)}
+                min={0}
+                max={100}
                 step={1}
                 className="w-full"
               />
               <div className="flex justify-between text-xs text-muted-foreground">
-                <span>1根</span>
-                <span>30根</span>
+                <span>激进 (0)</span>
+                <span>保守 (100)</span>
+              </div>
+              <p className="text-xs text-muted-foreground bg-muted/50 rounded p-2">
+                分数越低越激进（容易买入），分数越高越保守。
+                分数由各级别CD抄底信号组成：5m=2分、15m=4分、30m=6分、1h=8分、2h=10分、3h=12分、4h=14分、1d=16分、1w=18分、1M=20分。
+              </p>
+            </div>
+          </div>
+
+          {/* 梯子级别配置 */}
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold text-foreground border-b border-border pb-1">梯子级别配置</h3>
+            <div className="space-y-1.5">
+              <Label className="text-xs">选择梯子级别</Label>
+              <div className="grid grid-cols-4 gap-2">
+                {TIMEFRAMES.map(tf => (
+                  <button
+                    key={tf}
+                    type="button"
+                    onClick={() => setLadderTimeframe(tf)}
+                    className={`px-3 py-2 rounded text-xs font-medium transition-all border ${
+                      ladderTimeframe === tf
+                        ? "bg-primary/20 border-primary text-primary"
+                        : "bg-muted border-border text-muted-foreground hover:border-primary/50"
+                    }`}
+                  >
+                    {TIMEFRAME_LABELS[tf] || tf}
+                  </button>
+                ))}
+              </div>
+              <div className="text-xs text-muted-foreground bg-muted/50 rounded p-3 space-y-1">
+                <p className="font-medium text-foreground">买入逻辑说明：</p>
+                <p>• 第一买点：收盘价 &gt; 蓝梯下边缘 &rarr; 买入50%仓位</p>
+                <p>• 第二买点：蓝梯下边缘 &gt; 黄梯上边缘 &rarr; 买入余下50%仓位</p>
+                <p className="font-medium text-foreground mt-1">卖出逻辑说明：</p>
+                <p>• 第一卖点：收盘价 &lt; 蓝梯下边缘 &rarr; 卖出50%</p>
+                <p>• 第二卖点：蓝梯上边缘 &lt; 黄梯下边缘 &rarr; 卖出余下50%</p>
+                <p>• 第二买点后：蓝梯在黄梯之上持有</p>
               </div>
             </div>
           </div>
