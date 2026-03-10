@@ -14,7 +14,7 @@ import {
 import { eq, and, desc, inArray } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { getTodayRecommendations, runDailyScan, getScanStatus } from "./screener";
+import { getTodayRecommendations, runDailyScan, getScanStatus, getAllScanResults } from "./screener";
 import { getSchedulerStatus } from "./scheduler";
 import { runBacktest, isBacktestRunning } from "./backtestEngine";
 import { calculateLadder } from "./indicators";
@@ -130,6 +130,11 @@ export const appRouter = router({
     getTodayRecommendations: publicProcedure.query(async () => {
       const { results, fromCache, scanDate } = await getTodayRecommendations();
       return { results, fromCache, scanDate };
+    }),
+
+    getAllScanResults: publicProcedure.query(async () => {
+      const { results, total, withSignals, scanDate } = await getAllScanResults();
+      return { results, total, withSignals, scanDate };
     }),
 
     triggerScan: publicProcedure.mutation(async () => {

@@ -9,6 +9,7 @@ import Login from "./pages/Login";
 import Backtest from "./pages/Backtest";
 import BacktestDetail from "./pages/BacktestDetail";
 import Compare from "./pages/Compare";
+import AllStocks from "./pages/AllStocks";
 import { AuthProvider } from "./contexts/AuthContext";
 
 function Router() {
@@ -19,6 +20,7 @@ function Router() {
       <Route path="/backtest" component={Backtest} />
       <Route path="/backtest/:id" component={BacktestDetail} />
       <Route path="/compare" component={Compare} />
+      <Route path="/all-stocks" component={AllStocks} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

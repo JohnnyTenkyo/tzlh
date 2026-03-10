@@ -313,11 +313,16 @@ export default function Home() {
                 <span className="ml-1 text-xs">(已扫描{allResults.length}只)</span>
                 {fromCache && <span className="ml-1 text-xs text-muted-foreground/60">(今日缓存)</span>}
               </p>
-              {!user && (
-                <Button size="sm" variant="outline" onClick={() => navigate("/login")} className="text-xs border-border">
-                  登录后可使用回测功能
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => navigate("/all-stocks")} className="text-xs border-border">
+                  查看全部 {allResults.length} 只股票
                 </Button>
-              )}
+                {!user && (
+                  <Button size="sm" variant="outline" onClick={() => navigate("/login")} className="text-xs border-border">
+                    登录后可使用回测功能
+                  </Button>
+                )}
+              </div>
             </div>
 
             {/* 大盘股 */}

@@ -209,6 +209,65 @@ export async function getTodayRecommendations(sendNotification = false): Promise
 }
 
 /**
+ * 获取所有扫描结果（包括无信号的股票）
+ */
+export async function getAllScanResults(): Promise<{
+  results: AggressiveScore[];
+  total: number;
+  withSignals: number;
+  scanDate: string;
+}> {
+  const today = new Date().toISOString().split("T")[0];
+
+  try {
+    const db = await getDb();
+    if (db) {
+      // 先尝试从数据库读取今日扫描结果
+      const dbResults = await db.select().from(stockRecommendations)
+        .where(eq(stockRecommendations.date, today));
+
+      if (dbResults.length > 0) {
+        const results: AggressiveScore[] = dbResults.map(r => {
+          const details = r.details ? JSON.parse(r.details) : {};
+          return {
+            symbol: r.symbol,
+            totalScore: Number(r.totalScore),
+            matchLevel: r.matchLevel || "",
+            cdLevels: r.cdSignalLevels ? JSON.parse(r.cdSignalLevels) : [],
+            ladderBreakLevel: r.ladderBreakLevel || "",
+            reason: r.reason || "",
+            details,
+            aggressiveSignal: details.aggressiveSignal || false,
+            aggressiveType: details.aggressiveType || "",
+            aggressiveReason: details.aggressiveReason || "",
+          };
+        });
+
+        const withSignals = results.filter(r => r.totalScore > 0).length;
+        return {
+          results: results.sort((a, b) => b.totalScore - a.totalScore),
+          total: results.length,
+          withSignals,
+          scanDate: today,
+        };
+      }
+    }
+  } catch (err) {
+    console.error("[Screener] DB read error:", err);
+  }
+
+  // 如果数据库无结果，返回缓存结果
+  const results = Array.from(scanCache.values()).sort((a, b) => b.totalScore - a.totalScore);
+  const withSignals = results.filter(r => r.totalScore > 0).length;
+  return {
+    results,
+    total: results.length,
+    withSignals,
+    scanDate: lastScanDate || today,
+  };
+}
+
+/**
  * 获取扫描状态
  */
 export function getScanStatus() {

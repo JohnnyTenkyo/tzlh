@@ -355,6 +355,7 @@ export default function BacktestDetail() {
             <TabsTrigger value="chart" className="text-xs">收益曲线</TabsTrigger>
             <TabsTrigger value="kline" className="text-xs">K线图</TabsTrigger>
             <TabsTrigger value="trades" className="text-xs">买卖记录</TabsTrigger>
+            <TabsTrigger value="stats" className="text-xs">统计分析</TabsTrigger>
             <TabsTrigger value="config" className="text-xs">回测条件</TabsTrigger>
           </TabsList>
 
@@ -611,6 +612,115 @@ export default function BacktestDetail() {
                         {TIMEFRAME_LABELS[tf] || tf}
                       </span>
                     ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Statistics Analysis */}
+          <TabsContent value="stats">
+            <Card className="bg-card border-border">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">统计分析</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-6">
+                  {/* Trade Statistics */}
+                  <div>
+                    <h3 className="text-sm font-medium text-foreground mb-3">交易统计</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <MetricCard
+                        label="总交易次数"
+                        value={session.totalTrades ? String(session.totalTrades) : "0"}
+                      />
+                      <MetricCard
+                        label="胜利交易"
+                        value={session.winTrades ? String(session.winTrades) : "0"}
+                        positive={true}
+                      />
+                      <MetricCard
+                        label="失败交易"
+                        value={session.totalTrades && session.winTrades ? String(session.totalTrades - session.winTrades) : "0"}
+                        positive={false}
+                      />
+                      <MetricCard
+                        label="胜率"
+                        value={winRate ? `${winRate}%` : "--"}
+                        positive={winRate && parseFloat(winRate) > 50}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Performance Metrics */}
+                  <div>
+                    <h3 className="text-sm font-medium text-foreground mb-3">性能指标</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <MetricCard
+                        label="平均收益率"
+                        value={session.avgReturn ? `${parseFloat(String(session.avgReturn)).toFixed(2)}%` : "--"}
+                      />
+                      <MetricCard
+                        label="夏普比率"
+                        value={session.sharpeRatio ? parseFloat(String(session.sharpeRatio)).toFixed(2) : "--"}
+                      />
+                      <MetricCard
+                        label="收益回撤比"
+                        value={totalReturn !== null && maxDrawdown !== null ? (totalReturn / Math.abs(maxDrawdown)).toFixed(2) : "--"}
+                      />
+                      <MetricCard
+                        label="最大单笔盈利"
+                        value={session.maxProfit ? `$${parseFloat(String(session.maxProfit)).toLocaleString()}` : "--"}
+                        positive={true}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Risk Metrics */}
+                  <div>
+                    <h3 className="text-sm font-medium text-foreground mb-3">风险指标</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <MetricCard
+                        label="最大单笔亏损"
+                        value={session.maxLoss ? `-$${Math.abs(parseFloat(String(session.maxLoss))).toLocaleString()}` : "--"}
+                        positive={false}
+                      />
+                      <MetricCard
+                        label="平均亏损"
+                        value={session.avgLoss ? `-${parseFloat(String(session.avgLoss)).toFixed(2)}%` : "--"}
+                        positive={false}
+                      />
+                      <MetricCard
+                        label="最大连续亏损"
+                        value={session.maxConsecutiveLoss ? String(session.maxConsecutiveLoss) : "--"}
+                      />
+                      <MetricCard
+                        label="最大连续盈利"
+                        value={session.maxConsecutiveWin ? String(session.maxConsecutiveWin) : "--"}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Strategy Performance */}
+                  <div className="p-3 rounded-lg bg-primary/5 border border-primary/20">
+                    <p className="text-xs font-medium text-primary mb-2">📊 策略总体评价</p>
+                    <div className="space-y-1 text-xs text-foreground">
+                      {winRate && parseFloat(winRate) > 50 ? (
+                        <p className="text-green-400">✓ 胜率良好（{winRate}%），策略具有正期望值</p>
+                      ) : (
+                        <p className="text-yellow-400">⚠ 胜率偏低（{winRate}%），需要优化策略参数</p>
+                      )}
+                      {totalReturn !== null && totalReturn > 0 ? (
+                        <p className="text-green-400">✓ 总收益为正（{totalReturn.toFixed(2)}%），策略有效</p>
+                      ) : (
+                        <p className="text-red-400">✗ 总收益为负（{totalReturn?.toFixed(2)}%），需要改进</p>
+                      )}
+                      {maxDrawdown !== null && Math.abs(maxDrawdown) < 20 ? (
+                        <p className="text-green-400">✓ 最大回撤可控（{maxDrawdown.toFixed(2)}%），风险管理良好</p>
+                      ) : (
+                        <p className="text-orange-400">⚠ 最大回撤较大（{maxDrawdown?.toFixed(2)}%），需要加强风险控制</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               </CardContent>
