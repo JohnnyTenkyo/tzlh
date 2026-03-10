@@ -301,10 +301,17 @@ export async function fetchCandles(symbol: string, timeframe: Timeframe): Promis
 export async function fetchHistoricalCandles(
   symbol: string,
   timeframe: Timeframe,
-  startDate: string, // YYYY-MM-DD（可选）
-  endDate: string    // YYYY-MM-DD（可选）
+  startDate: string,
+  endDate: string
 ): Promise<Candle[]> {
-  return fetchCandles(symbol, timeframe);
+  const candles = await fetchCandles(symbol, timeframe);
+
+  const startTs = new Date(`${startDate}T00:00:00.000Z`).getTime();
+  const endTs = new Date(`${endDate}T23:59:59.999Z`).getTime();
+
+  return candles
+    .filter(c => Number.isFinite(c.time) && c.time >= startTs && c.time <= endTs)
+    .sort((a, b) => a.time - b.time);
 }
 
 /**

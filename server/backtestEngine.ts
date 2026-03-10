@@ -292,29 +292,33 @@ async function backtestSymbol(
   symbol: string,
   config: BacktestConfig,
   allCandlesByTf: Partial<Record<Timeframe, Candle[]>>,
-  dates: string[],
+  _dates: string[],
   state: BacktestState
 ): Promise<void> {
-  // 检查是否有足够的数据
-  const has1d = allCandlesByTf["1d"] && allCandlesByTf["1d"]!.length > 0;
-  if (!has1d) return;
+  // 直接按真实的日线 candle 推进，而不是按 YYYY-MM-DD 午夜时间戳推进
+  const dailyAll = allCandlesByTf["1d"] || [];
+  if (dailyAll.length === 0) return;
 
-  for (const date of dates) {
-    const dateTime = new Date(date).getTime();
+  for (const dailyCandle of dailyAll) {
+    const date = new Date(dailyCandle.time).toISOString().split("T")[0];
+
+    // 只回测用户选择区间
+    if (date < config.startDate || date > config.endDate) continue;
+
+    const cutoffTime = dailyCandle.time;
+    const closePrice = dailyCandle.close;
+
     const candlesUpTo: Partial<Record<Timeframe, Candle[]>> = {};
 
     // 截取到当前日期的K线
     for (const [tf, candles] of Object.entries(allCandlesByTf)) {
       if (candles) {
-        candlesUpTo[tf as Timeframe] = candles.filter(c => c.time <= dateTime);
+        candlesUpTo[tf as Timeframe] = candles.filter(c => c.time <= cutoffTime);
       }
     }
 
     const dailyCandles = candlesUpTo["1d"] || [];
     if (dailyCandles.length === 0) continue;
-
-    const closePrice = getClosePriceOnDate(dailyCandles, date);
-    if (closePrice === null) continue;
 
     // ============ 有持仓：检查卖出信号 ============
     if (state.positions.has(symbol)) {

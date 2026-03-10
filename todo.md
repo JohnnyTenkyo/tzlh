@@ -207,3 +207,11 @@
 - [x] 显示缓存更新日志和失败股票列表
 - [x] 在 Home.tsx 中添加快速操作卡片导航
 - [x] 在 App.tsx 中注册路由
+
+## 第三十二轮修复（回测引擎日期对齐逻辑修复）
+- [x] 分析 backtestEngine.ts 中的日期对齐问题：使用字符串日期 + 午夜时间戳导致 closePrice 无法匹配
+- [x] 修改 backtestSymbol() 函数：改为按真实日线 candle 推进，而不是按自然日字符串推进
+- [x] 移除 getClosePriceOnDate() 函数中的严格相等匹配，直接使用 dailyCandle.close
+- [x] 修复 marketData.ts 中的 fetchHistoricalCandles()：添加回测区间过滤逻辑
+- [x] 验证修复效果：所有 28 个单元测试都通过
+- [x] 测试完整回测流程，验证交易记录数量是否正常
