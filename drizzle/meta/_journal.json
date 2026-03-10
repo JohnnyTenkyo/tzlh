@@ -29,6 +29,13 @@
       "when": 1772793708638,
       "tag": "0003_fancy_paibok",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1773163419708,
+      "tag": "0004_familiar_zombie",
+      "breakpoints": true
     }
   ]
 }

@@ -5,6 +5,7 @@
 import { detectFirstBuySignal, detectFirstSellSignal, detectSecondBuySignal, detectSecondSellSignal } from "./buySignalWithScore";
 import { calculateCDScore } from "./cdScore";
 import { fetchHistoricalCandles, fetchQuote } from "./marketData";
+import { getCandlesFromCache } from "./cacheManager";
 import {
   Candle,
   Timeframe,
@@ -105,10 +106,24 @@ async function getCandlesWithCache(
 ): Promise<Candle[]> {
   const cacheKey = getCacheKey(symbol, tf, startDate, endDate);
   
+  // 1. Check in-memory cache
   if (candleCache.has(cacheKey)) {
     return candleCache.get(cacheKey)!;
   }
   
+  // 2. Check database cache (priority)
+  try {
+    const dbCachedCandles = await getCandlesFromCache(symbol, tf, startDate, endDate);
+    if (dbCachedCandles && dbCachedCandles.length > 0) {
+      console.log(`[Cache] Using cached data for ${symbol}/${tf}`);
+      candleCache.set(cacheKey, dbCachedCandles);
+      return dbCachedCandles;
+    }
+  } catch (err) {
+    console.warn(`[Cache] Error reading from database cache:`, err);
+  }
+  
+  // 3. Fetch from API
   let lastError: Error | null = null;
   for (let attempt = 0; attempt < retries; attempt++) {
     try {

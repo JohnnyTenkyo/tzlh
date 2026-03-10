@@ -165,3 +165,42 @@ export const backtestTrades = mysqlTable("backtest_trades", {
 
 export type BacktestTrade = typeof backtestTrades.$inferSelect;
 export type InsertBacktestTrade = typeof backtestTrades.$inferInsert;
+
+
+/**
+ * Historical K-line data cache
+ * Stores pre-fetched historical candles for fast backtest
+ */
+export const historicalCandleCache = mysqlTable("historical_candle_cache", {
+  id: bigint("id", { mode: "number" }).autoincrement().primaryKey(),
+  symbol: varchar("symbol", { length: 20 }).notNull(),
+  timeframe: varchar("timeframe", { length: 10 }).notNull(), // 1d, 4h, 1h, 30m, 15m
+  date: varchar("date", { length: 10 }).notNull(), // YYYY-MM-DD
+  open: decimal("open", { precision: 16, scale: 4 }).notNull(),
+  high: decimal("high", { precision: 16, scale: 4 }).notNull(),
+  low: decimal("low", { precision: 16, scale: 4 }).notNull(),
+  close: decimal("close", { precision: 16, scale: 4 }).notNull(),
+  volume: bigint("volume", { mode: "number" }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type HistoricalCandleCache = typeof historicalCandleCache.$inferSelect;
+export type InsertHistoricalCandleCache = typeof historicalCandleCache.$inferInsert;
+
+/**
+ * Cache metadata for tracking cache status
+ */
+export const cacheMetadata = mysqlTable("cache_metadata", {
+  id: int("id").autoincrement().primaryKey(),
+  symbol: varchar("symbol", { length: 20 }).notNull().unique(),
+  lastUpdated: timestamp("lastUpdated").defaultNow().onUpdateNow().notNull(),
+  status: mysqlEnum("status", ["pending", "caching", "completed", "failed"]).default("pending").notNull(),
+  earliestDate: varchar("earliestDate", { length: 10 }), // earliest cached date (YYYY-MM-DD)
+  latestDate: varchar("latestDate", { length: 10 }), // latest cached date (YYYY-MM-DD)
+  totalCandles: int("totalCandles").default(0),
+  errorMessage: text("errorMessage"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CacheMetadata = typeof cacheMetadata.$inferSelect;
+export type InsertCacheMetadata = typeof cacheMetadata.$inferInsert;
