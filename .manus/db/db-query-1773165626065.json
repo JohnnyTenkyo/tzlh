@@ -1,0 +1,14 @@
+{
+  "query": "SELECT COUNT(DISTINCT symbol) as cached_stocks, MAX(lastUpdated) as latest_update FROM cache_metadata;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2HCC4smJtrSzVE7.4a5605c2899a --database RYDVHRQSwvsKmDK7d9JHib --execute SELECT COUNT(DISTINCT symbol) as cached_stocks, MAX(lastUpdated) as latest_update FROM cache_metadata;",
+  "rows": [
+    {
+      "cached_stocks": "27",
+      "latest_update": "2026-03-10 17:59:41"
+    }
+  ],
+  "messages": [],
+  "stdout": "cached_stocks\tlatest_update\n27\t2026-03-10 17:59:41\n",
+  "stderr": "",
+  "execution_time_ms": 1563
+}

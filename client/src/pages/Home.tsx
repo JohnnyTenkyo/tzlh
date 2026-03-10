@@ -374,7 +374,7 @@ export default function Home() {
 
         {/* Quick Actions */}
         {user && (
-          <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card
               className="bg-card border-border hover:border-primary/30 transition-all cursor-pointer"
               onClick={() => navigate("/backtest")}
@@ -401,6 +401,36 @@ export default function Home() {
                 <div>
                   <p className="font-medium text-foreground text-sm">横向对比</p>
                   <p className="text-xs text-muted-foreground">比较多个回测结果</p>
+                </div>
+                <ChevronRight size={16} className="text-muted-foreground ml-auto" />
+              </CardContent>
+            </Card>
+            <Card
+              className="bg-card border-border hover:border-primary/30 transition-all cursor-pointer"
+              onClick={() => navigate("/optimize")}
+            >
+              <CardContent className="p-4 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <Zap size={20} className="text-primary" />
+                </div>
+                <div>
+                  <p className="font-medium text-foreground text-sm">参数优化</p>
+                  <p className="text-xs text-muted-foreground">网格搜索最优参数</p>
+                </div>
+                <ChevronRight size={16} className="text-muted-foreground ml-auto" />
+              </CardContent>
+            </Card>
+            <Card
+              className="bg-card border-border hover:border-primary/30 transition-all cursor-pointer"
+              onClick={() => navigate("/cache")}
+            >
+              <CardContent className="p-4 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <LineChart size={20} className="text-primary" />
+                </div>
+                <div>
+                  <p className="font-medium text-foreground text-sm">缓存管理</p>
+                  <p className="text-xs text-muted-foreground">管理 K 线数据缓存</p>
                 </div>
                 <ChevronRight size={16} className="text-muted-foreground ml-auto" />
               </CardContent>

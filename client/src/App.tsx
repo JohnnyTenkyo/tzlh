@@ -10,6 +10,8 @@ import Backtest from "./pages/Backtest";
 import BacktestDetail from "./pages/BacktestDetail";
 import Compare from "./pages/Compare";
 import AllStocks from "./pages/AllStocks";
+import ParameterOptimization from "./pages/ParameterOptimization";
+import CacheManagement from "./pages/CacheManagement";
 import { AuthProvider } from "./contexts/AuthContext";
 
 function Router() {
@@ -21,6 +23,8 @@ function Router() {
       <Route path="/backtest/:id" component={BacktestDetail} />
       <Route path="/compare" component={Compare} />
       <Route path="/all-stocks" component={AllStocks} />
+      <Route path="/optimize" component={ParameterOptimization} />
+      <Route path="/cache" component={CacheManagement} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
