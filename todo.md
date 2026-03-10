@@ -215,3 +215,12 @@
 - [x] 修复 marketData.ts 中的 fetchHistoricalCandles()：添加回测区间过滤逻辑
 - [x] 验证修复效果：所有 28 个单元测试都通过
 - [x] 测试完整回测流程，验证交易记录数量是否正常
+
+## 第三十三轮优化（分时数据覆盖扩展）
+- [x] 配置 Tiingo API 密钥到环境变量
+- [x] 配置 Alpha Vantage API 密钥到环境变量
+- [x] 优化 Tiingo 数据源：支持 30m/15m 更长时间范围（超过 60 天）
+- [x] 优化 Alpha Vantage 数据源：支持 30m/15m 更长时间范围
+- [x] 修改 fetchHistoricalCandles()：按用户选择的时间区间调整数据源策略
+- [x] 测试多数据源的分时数据覆盖效果
+- [x] 验证回测结果的准确性和完整性

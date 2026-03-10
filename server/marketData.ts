@@ -53,7 +53,7 @@ function resampleCandles(candles: Candle[], factor: number): Candle[] {
 /**
  * 从Finnhub获取K线数据（主数据源）
  */
-async function fetchFinnhubCandles(symbol: string, timeframe: Timeframe): Promise<Candle[]> {
+async function fetchFinnhubCandles(symbol: string, timeframe: Timeframe, startDate?: string, endDate?: string): Promise<Candle[]> {
   const apiKey = ENV.finnhubApiKey;
   if (!apiKey) throw new Error("FINNHUB_API_KEY not set");
 
@@ -102,7 +102,7 @@ async function fetchFinnhubCandles(symbol: string, timeframe: Timeframe): Promis
 /**
  * 从Tiingo获取K线数据（备用数据源）
  */
-async function fetchTiingoCandles(symbol: string, timeframe: Timeframe): Promise<Candle[]> {
+async function fetchTiingoCandles(symbol: string, timeframe: Timeframe, startDate?: string, endDate?: string): Promise<Candle[]> {
   const apiKey = ENV.tiingoApiKey;
   if (!apiKey) throw new Error("TIINGO_API_KEY not set");
 
@@ -119,12 +119,15 @@ async function fetchTiingoCandles(symbol: string, timeframe: Timeframe): Promise
 
   const resolution = resolutionMap[timeframe];
   const now = new Date();
-  const startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  const endDate = now.toISOString().split('T')[0];
+  // Tiingo 支持 2 年的分时数据覆盖
+  const defaultStartDate = new Date(now.getTime() - 730 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const defaultEndDate = now.toISOString().split('T')[0];
+  const queryStartDate = startDate || defaultStartDate;
+  const queryEndDate = endDate || defaultEndDate;
 
   try {
     const url = `https://api.tiingo.com/tiingo/daily/${encodeURIComponent(symbol)}/prices`;
-    const params = { startDate, endDate, resampleFreq: resolution, token: apiKey };
+    const params = { startDate: queryStartDate, endDate: queryEndDate, resampleFreq: resolution, token: apiKey };
     const res = await axios.get(url, {
       params,
       timeout: 15000,
@@ -155,7 +158,7 @@ async function fetchTiingoCandles(symbol: string, timeframe: Timeframe): Promise
 /**
  * 从Alpha Vantage获取K线数据（备用数据源）
  */
-async function fetchAlphaVantageCandles(symbol: string, timeframe: Timeframe): Promise<Candle[]> {
+async function fetchAlphaVantageCandles(symbol: string, timeframe: Timeframe, startDate?: string, endDate?: string): Promise<Candle[]> {
   const apiKey = ENV.alphaVantageApiKey;
   if (!apiKey) throw new Error("ALPHAVANTAGE_API_KEY not set");
 
@@ -222,7 +225,7 @@ async function fetchAlphaVantageCandles(symbol: string, timeframe: Timeframe): P
 /**
  * 从Yahoo Finance获取K线数据（最后备用）
  */
-async function fetchYahooCandles(symbol: string, timeframe: Timeframe): Promise<Candle[]> {
+async function fetchYahooCandles(symbol: string, timeframe: Timeframe, startDate?: string, endDate?: string): Promise<Candle[]> {
   const interval = INTERVAL_MAP[timeframe];
   const range = RANGE_MAP[timeframe];
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
@@ -270,7 +273,7 @@ async function fetchYahooCandles(symbol: string, timeframe: Timeframe): Promise<
 /**
  * 获取K线数据（多源策略：Finnhub > Tiingo > Alpha Vantage > Yahoo）
  */
-export async function fetchCandles(symbol: string, timeframe: Timeframe): Promise<Candle[]> {
+export async function fetchCandles(symbol: string, timeframe: Timeframe, startDate?: string, endDate?: string): Promise<Candle[]> {
   const sources = [
     { name: "Finnhub", fn: fetchFinnhubCandles },
     { name: "Tiingo", fn: fetchTiingoCandles },
@@ -281,7 +284,7 @@ export async function fetchCandles(symbol: string, timeframe: Timeframe): Promis
   for (const source of sources) {
     try {
       console.log(`[MarketData] Trying ${source.name} for ${symbol}/${timeframe}...`);
-      const candles = await source.fn(symbol, timeframe);
+      const candles = await source.fn(symbol, timeframe, startDate, endDate);
       if (candles.length > 0) {
         console.log(`[MarketData] Success: ${source.name} returned ${candles.length} candles for ${symbol}/${timeframe}`);
         return candles;
@@ -304,7 +307,7 @@ export async function fetchHistoricalCandles(
   startDate: string,
   endDate: string
 ): Promise<Candle[]> {
-  const candles = await fetchCandles(symbol, timeframe);
+  const candles = await fetchCandles(symbol, timeframe, startDate, endDate);
 
   const startTs = new Date(`${startDate}T00:00:00.000Z`).getTime();
   const endTs = new Date(`${endDate}T23:59:59.999Z`).getTime();
