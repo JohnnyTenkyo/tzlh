@@ -197,20 +197,26 @@ async function executeWithConcurrency<T>(
   maxConcurrent: number
 ): Promise<T[]> {
   const results: T[] = [];
-  const executing: Promise<void>[] = [];
+  const executing: Set<Promise<void>> = new Set();
   
   for (let i = 0; i < tasks.length; i++) {
     const task = tasks[i];
     
     const promise = Promise.resolve().then(async () => {
-      results[i] = await task();
+      try {
+        results[i] = await task();
+      } catch (err) {
+        console.error(`[Backtest] Task ${i} failed:`, err);
+        results[i] = undefined as any;
+      }
+    }).finally(() => {
+      executing.delete(promise);
     });
     
-    executing.push(promise);
+    executing.add(promise);
     
-    if (executing.length >= maxConcurrent) {
+    if (executing.size >= maxConcurrent) {
       await Promise.race(executing);
-      executing.splice(executing.findIndex(p => p === promise), 1);
     }
   }
   
