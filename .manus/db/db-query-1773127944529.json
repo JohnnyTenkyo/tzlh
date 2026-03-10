@@ -1,0 +1,28 @@
+{
+  "query": "SELECT id, name, status, progress FROM backtest_sessions WHERE id IN (240003, 240002, 240001) ORDER BY id DESC LIMIT 5;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2HCC4smJtrSzVE7.4a5605c2899a --database RYDVHRQSwvsKmDK7d9JHib --execute SELECT id, name, status, progress FROM backtest_sessions WHERE id IN (240003, 240002, 240001) ORDER BY id DESC LIMIT 5;",
+  "rows": [
+    {
+      "id": "240003",
+      "name": "q",
+      "status": "running",
+      "progress": "13"
+    },
+    {
+      "id": "240002",
+      "name": "测试回测 - 标准策略",
+      "status": "completed",
+      "progress": "100"
+    },
+    {
+      "id": "240001",
+      "name": "1",
+      "status": "running",
+      "progress": "13"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tstatus\tprogress\n240003\tq\trunning\t13\n240002\t测试回测 - 标准策略\tcompleted\t100\n240001\t1\trunning\t13\n",
+  "stderr": "",
+  "execution_time_ms": 1645
+}

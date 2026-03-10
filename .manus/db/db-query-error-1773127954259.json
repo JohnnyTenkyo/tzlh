@@ -1,0 +1,8 @@
+{
+  "query": "SELECT id, name, status, progress, error_message FROM backtest_sessions ORDER BY created_at DESC LIMIT 3;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2HCC4smJtrSzVE7.4a5605c2899a --database RYDVHRQSwvsKmDK7d9JHib --execute SELECT id, name, status, progress, error_message FROM backtest_sessions ORDER BY created_at DESC LIMIT 3;",
+  "returncode": 1,
+  "logs": [
+    "ERROR 1054 (42S22) at line 1: Unknown column 'created_at' in 'order clause'"
+  ]
+}

@@ -5,6 +5,7 @@
  */
 import axios from "axios";
 import type { Candle, Timeframe } from "./indicators";
+import { ENV } from "./_core/env";
 
 // ============ 时间范围映射 ============
 const RANGE_MAP: Record<Timeframe, string> = {
@@ -102,7 +103,7 @@ async function fetchYahooCandles(symbol: string, timeframe: Timeframe): Promise<
  * 从Finnhub获取K线数据（备用数据源）
  */
 async function fetchFinnhubCandles(symbol: string, timeframe: Timeframe): Promise<Candle[]> {
-  const apiKey = process.env.FINNHUB_API_KEY;
+  const apiKey = ENV.finnhubApiKey;
   if (!apiKey) throw new Error("FINNHUB_API_KEY not set");
 
   const resolutionMap: Record<Timeframe, { resolution: string; days: number }> = {
