@@ -112,6 +112,9 @@ async function getCandlesWithCache(
   let lastError: Error | null = null;
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
+      // Add delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       const candles = await withTimeout(
         fetchHistoricalCandles(symbol, tf, startDate, endDate),
         API_TIMEOUT_MS
