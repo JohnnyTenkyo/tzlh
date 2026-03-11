@@ -383,3 +383,34 @@
 - [x] 在 CacheManagement.tsx 中添加「预热全部股票」按钮
 - [x] 实现预热进度 UI（进度条、提示信息）
 - [x] 所有测试通过（39 tests），TypeScript 零错误
+
+
+## 第五十一轮修复（回测详情页四大问题）
+- [x] 修复 backtestEngine.ts 中的交易笔数统计错误（买入+卖出都计数）
+- [x] 修复统计分析数据计算错误（avgReturn、佣金字段存入DB）
+- [x] 添加佣金费率表示：总佣金金额 + 每笔交易的佣金花费
+- [x] 实现资产净值曲线切换为收益率曲线
+- [x] 实现大盘对比功能（选择 QQQ 或 SPY 作为基准）
+- [x] 所有测试通过，TypeScript 零错误
+
+## 第五十二轮修复（六项综合任务）
+- [x] 修复 backtestEngine.ts：avgReturn 计算、佣金字段存入 DB、交易笔数（买入+卖出）
+- [x] 修复 BacktestDetail.tsx：收益率曲线切换 + QQQ/SPY 大盘对比 + 佣金显示
+- [x] 修复 Alpaca 403（去掉 adjustment 参数）
+- [x] 修复 AlphaVantage 无数据（修复 API 参数）
+- [x] 修复 Finnhub 403（限制只用日线）
+- [x] 修复 Stooq 无数据（跳过非美股代码）
+- [x] 修复 Tiingo 429（添加 retry 机制）
+- [x] 修复 Yahoo Finance 超时（增加超时时间）
+- [x] 缓存管理页面添加返回按钮
+- [x] 移除首页网格搜索参数优化板块
+- [x] 所有测试通过，TypeScript 零错误
+
+## 第五十三轮优化（缓存架构重构）
+- [x] 增量缓存：已缓存的数据不重复请求，只补充新增数据
+- [x] Alpaca 批量请求：每批 50 支股票一次 API 调用（fetchAlpacaBatchCandles）
+- [x] 后台持续缓存任务：startBackgroundWarmup，遇到限速自动等待后继续，可跨天运行
+- [x] getWarmupProgress 实时进度查询（running/completed/failed/paused/estimatedFinishAt）
+- [x] routers.ts 添加 warmupAllStocks（非阻塞）、stopWarmup、getWarmupProgress 路由
+- [x] CacheManagement.tsx 更新预热 UI：实时进度条、限速等待提示、停止按钮
+- [x] 所有测试通过（39 tests），TypeScript 零错误

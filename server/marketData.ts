@@ -195,7 +195,8 @@ async function fetchAlpacaCandles(
       start: defaultStart,
       end: defaultEnd,
       limit: 10000,
-      adjustment: "all", // 复权数据
+      // NOTE: adjustment="all" requires paid subscription; omit for free accounts
+      // adjustment: "all",
     };
     if (nextPageToken) params.page_token = nextPageToken;
 
@@ -231,6 +232,91 @@ async function fetchAlpacaCandles(
 }
 
 /**
+ * Alpaca 批量请求：一次获取多个股票的 K 线数据
+ * 返回 Map<symbol, Candle[]>
+ */
+export async function fetchAlpacaBatchCandles(
+  symbols: string[],
+  timeframe: Timeframe,
+  startDate: string,
+  endDate: string
+): Promise<Map<string, Candle[]>> {
+  const apiKey = ENV.alpacaApiKey;
+  const secretKey = ENV.alpacaSecretKey;
+  if (!apiKey || !secretKey) throw new Error("ALPACA_API_KEY or ALPACA_SECRET_KEY not set");
+
+  if (!BASE_TIMEFRAMES.includes(timeframe)) {
+    throw new Error(`Alpaca batch does not support aggregated timeframe: ${timeframe}`);
+  }
+
+  const tfMap: Record<string, string> = {
+    "15m": "15Min",
+    "1h":  "1Hour",
+    "1d":  "1Day",
+  };
+  const alpacaTf = tfMap[timeframe];
+  if (!alpacaTf) throw new Error(`Alpaca unsupported timeframe: ${timeframe}`);
+
+  const headers = {
+    "APCA-API-KEY-ID": apiKey,
+    "APCA-API-SECRET-KEY": secretKey,
+  };
+
+  const result = new Map<string, Candle[]>();
+  // 初始化所有 symbol 为空数组
+  for (const s of symbols) result.set(s, []);
+
+  let nextPageToken: string | null = null;
+  let pageCount = 0;
+  const maxPages = 200;
+
+  do {
+    const params: Record<string, any> = {
+      symbols: symbols.join(","),
+      timeframe: alpacaTf,
+      start: startDate,
+      end: endDate,
+      limit: 10000,
+    };
+    if (nextPageToken) params.page_token = nextPageToken;
+
+    const res = await axios.get("https://data.alpaca.markets/v2/stocks/bars", {
+      params,
+      headers,
+      timeout: 30000,
+    });
+
+    const bars = res.data?.bars || {};
+    for (const [sym, symBars] of Object.entries(bars)) {
+      if (!Array.isArray(symBars)) continue;
+      const existing = result.get(sym) || [];
+      for (const bar of symBars as any[]) {
+        existing.push({
+          time: new Date(bar.t).getTime(),
+          open: bar.o,
+          high: bar.h,
+          low: bar.l,
+          close: bar.c,
+          volume: bar.v || 0,
+        });
+      }
+      result.set(sym, existing);
+    }
+
+    nextPageToken = res.data?.next_page_token || null;
+    pageCount++;
+  } while (nextPageToken && pageCount < maxPages);
+
+  // 排序
+  Array.from(result.keys()).forEach((sym) => {
+    const candles = result.get(sym) || [];
+    result.set(sym, candles.sort((a: Candle, b: Candle) => a.time - b.time));
+  });
+
+  return result;
+}
+
+/**
  * Stooq CSV 数据（日线/周线，免费，20+年历史）
  */
 function toStooqSymbol(symbol: string): string {
@@ -247,6 +333,7 @@ async function fetchStooqCandles(
   if (timeframe !== "1d") {
     throw new Error(`Stooq does not support ${timeframe} timeframe`);
   }
+  // Stooq 只支持特定市场的股票，对于非美股或特殊代码先尝试美股格式
   const stooqSymbol = toStooqSymbol(symbol);
   const now = new Date();
   const defaultEnd = endDate || now.toISOString().split("T")[0];
@@ -260,8 +347,9 @@ async function fetchStooqCandles(
     responseType: "text",
   });
   const text: string = res.data;
-  if (!text || text.includes("No data") || text.includes("Warning:")) {
-    throw new Error(`Stooq returned no data for ${symbol}/${timeframe}`);
+  // Stooq 返回无数据时通常包含 "No data" 或 HTML 页面
+  if (!text || text.includes("No data") || text.includes("Warning:") || text.trim().startsWith("<")) {
+    throw new Error(`Stooq returned no data for ${symbol}/${timeframe} (symbol may not be listed on US markets)`);
   }
   const lines = text.trim().split("\n");
   if (lines.length < 2) throw new Error("Stooq: insufficient data rows");
@@ -304,10 +392,26 @@ async function fetchTiingoIntradayCandles(
   const defaultStart = startDate || new Date(now.getTime() - 730 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
   const defaultEnd = endDate || now.toISOString().split("T")[0];
   const url = `https://api.tiingo.com/iex/${encodeURIComponent(symbol)}/prices`;
-  const res = await axios.get(url, {
-    params: { startDate: defaultStart, endDate: defaultEnd, resampleFreq, columns: "open,high,low,close,volume", token: apiKey },
-    timeout: 20000,
-  });
+  // Tiingo 可能返回 429 限速，添加重试机制
+  let res: any;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      res = await axios.get(url, {
+        params: { startDate: defaultStart, endDate: defaultEnd, resampleFreq, columns: "open,high,low,close,volume", token: apiKey },
+        timeout: 20000,
+      });
+      if (res.status !== 429) break;
+      // 429: 等待再重试
+      await new Promise(r => setTimeout(r, (attempt + 1) * 2000));
+    } catch (err: any) {
+      if (err?.response?.status === 429) {
+        await new Promise(r => setTimeout(r, (attempt + 1) * 2000));
+        continue;
+      }
+      throw err;
+    }
+  }
+  if (!res || res.status === 429) throw new Error(`Tiingo IEX rate limited for ${symbol}/${timeframe}`);
   if (!Array.isArray(res.data) || res.data.length === 0) {
     throw new Error(`No intraday data from Tiingo IEX for ${symbol}/${timeframe}`);
   }
@@ -371,9 +475,11 @@ async function fetchFinnhubCandles(
   if (!BASE_TIMEFRAMES.includes(timeframe)) {
     throw new Error(`Finnhub: ${timeframe} is not a base timeframe`);
   }
+  // Finnhub 免费账户仅支持日线（D），分时数据需要付费订阅
+  if (timeframe !== "1d") {
+    throw new Error(`Finnhub free tier does not support ${timeframe} intraday data`);
+  }
   const resolutionMap: Record<string, { resolution: string; days: number }> = {
-    "15m": { resolution: "15", days: 60 },
-    "1h":  { resolution: "60", days: 730 },
     "1d":  { resolution: "D", days: 3650 },
   };
   const { resolution, days } = resolutionMap[timeframe];
@@ -427,8 +533,16 @@ async function fetchAlphaVantageCandles(
   const func = functionMap[timeframe];
   const interval = intervalMap[timeframe];
   const params: any = { symbol, apikey: apiKey, outputsize: "full", function: func };
-  if (interval) params.interval = interval;
-  const res = await axios.get("https://www.alphavantage.co/query", { params, timeout: 15000 });
+  if (interval) {
+    params.interval = interval;
+    params.extended_hours = "false"; // 只获取正常交易时间数据
+    params.month = undefined; // 不指定月份，获取最新数据
+  }
+  const res = await axios.get("https://www.alphavantage.co/query", { params, timeout: 20000 });
+  // 检查 API 限速错误
+  if (res.data?.Note || res.data?.Information) {
+    throw new Error(`AlphaVantage rate limit: ${res.data?.Note || res.data?.Information}`);
+  }
   const data = res.data;
   const timeSeriesKey = Object.keys(data).find((k) => k.startsWith("Time Series"));
   if (!timeSeriesKey || !data[timeSeriesKey]) throw new Error("No data from Alpha Vantage");
@@ -461,12 +575,28 @@ async function fetchYahooCandles(
   const INTERVAL_MAP: Record<string, string> = { "15m": "15m", "1h": "60m", "1d": "1d" };
   const interval = INTERVAL_MAP[timeframe];
   const range = RANGE_MAP[timeframe];
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
-  const res = await axios.get(url, {
-    params: { interval, range },
-    timeout: 15000,
-    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-  });
+  // Yahoo Finance 有时需要备用 URL
+  const urls = [
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`,
+    `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`,
+  ];
+  let res: any = null;
+  for (const url of urls) {
+    try {
+      res = await axios.get(url, {
+        params: { interval, range },
+        timeout: 20000,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "application/json",
+        },
+      });
+      if (res.data?.chart?.result?.[0]) break;
+    } catch {
+      // 尝试备用 URL
+    }
+  }
+  if (!res) throw new Error("Yahoo Finance: all URLs failed");
   const result = res.data?.chart?.result?.[0];
   if (!result) throw new Error("No data from Yahoo Finance");
   const timestamps: number[] = result.timestamp || [];

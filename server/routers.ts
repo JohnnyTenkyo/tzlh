@@ -22,6 +22,7 @@ import type { Timeframe } from "./indicators";
 import { fetchHistoricalCandles } from './marketData';
 import { dataSourceHealth, cacheMetadata, historicalCandleCache } from "../drizzle/schema";
 import { sql } from "drizzle-orm";
+import { startBackgroundWarmup, stopWarmup, getWarmupProgress } from './cacheManager';
 
 const JWT_SECRET = process.env.JWT_SECRET || "quant-backtest-secret-key";
 
@@ -496,79 +497,39 @@ export const appRouter = router({
       await db.delete(cacheMetadata);
       return { success: true, message: '已清空全部 K 线缓存' };
     }),
+    // 启动后台全量预热（非阻塞，立即返回，后台持续运行）
     warmupAllStocks: publicProcedure
       .input(z.object({
         timeframes: z.array(z.string()).default(['1d', '1h', '15m']),
-        daysBack: z.number().default(365),
       }))
       .mutation(async ({ input }) => {
         const { US_STOCKS } = await import('@shared/stockPool');
-        const db = await getDb();
-        if (!db) throw new Error('Database not available');
-        
-        const formatDate = (d: Date) => d.toISOString().split('T')[0];
-        
         const symbols = US_STOCKS.map((s: any) => s.symbol);
-        const total = symbols.length;
-        let completed = 0;
-        let failed = 0;
-        const errors: { symbol: string; error: string }[] = [];
-        
-        for (const symbol of symbols) {
-          await db.insert(cacheMetadata)
-            .values({ symbol, status: 'pending' })
-            .onDuplicateKeyUpdate({ set: { status: 'pending' } });
+        const progress = getWarmupProgress();
+        if (progress.running) {
+          return { success: false, message: '后台预热任务已在运行中，请查看进度' };
         }
-        
-        const batchSize = 5;
-        for (let i = 0; i < symbols.length; i += batchSize) {
-          const batch = symbols.slice(i, i + batchSize);
-          const promises = batch.map(async (symbol: string) => {
-            try {
-              await db.update(cacheMetadata)
-                .set({ status: 'caching' })
-                .where(eq(cacheMetadata.symbol, symbol));
-              
-              for (const tf of input.timeframes) {
-                const endDate = new Date();
-                const startDate = new Date(endDate.getTime() - input.daysBack * 24 * 60 * 60 * 1000);
-                
-                try {
-                  const candles = await fetchHistoricalCandles(symbol, tf as Timeframe, formatDate(startDate), formatDate(endDate));
-                  if (candles && candles.length > 0) {
-                    // cached
-                  }
-                } catch (e) {
-                  console.error(`Failed to cache ${symbol} ${tf}:`, e);
-                }
-              }
-              
-              await db.update(cacheMetadata)
-                .set({ status: 'completed', errorMessage: null })
-                .where(eq(cacheMetadata.symbol, symbol));
-              completed++;
-            } catch (e) {
-              failed++;
-              const msg = e instanceof Error ? e.message : String(e);
-              errors.push({ symbol, error: msg });
-              await db.update(cacheMetadata)
-                .set({ status: 'failed', errorMessage: msg.slice(0, 500) })
-                .where(eq(cacheMetadata.symbol, symbol));
-            }
-          });
-          
-          await Promise.all(promises);
-        }
-        
+        // 非阻塞启动（不 await）
+        startBackgroundWarmup(symbols, input.timeframes as Timeframe[], 50).catch((err) => {
+          console.error('[Warmup] Background task error:', err);
+        });
         return {
           success: true,
-          total,
-          completed,
-          failed,
-          errors: errors.slice(0, 10),
-          message: `预热完成：${completed}/${total} 成功，${failed} 失败`,
+          total: symbols.length,
+          message: `后台预热任务已启动：${symbols.length} 支股票 × ${input.timeframes.length} 个时间级别，使用 Alpaca 批量 API（每批 50 支），遇到限速自动等待后继续`,
         };
       }),
+
+    // 停止后台预热
+    stopWarmup: publicProcedure.mutation(() => {
+      stopWarmup();
+      return { success: true, message: '后台预热任务已停止' };
+    }),
+
+    // 查询后台预热进度
+    getWarmupProgress: publicProcedure.query(() => {
+      return getWarmupProgress();
+    }),
   }),
 
   // ============ 数据源健康监控 ============

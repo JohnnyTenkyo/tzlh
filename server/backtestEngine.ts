@@ -391,6 +391,7 @@ export async function backtestSymbol(
             reason: sellSig.reason,
             pnl: String(pnl.toFixed(2)),
             pnlPercent: String(((pnl / (actualQty * position.avgCost)) * 100).toFixed(4)),
+            fees: String(sellFees.totalFee.toFixed(4)),
           });
 
           state.balance += netAmount;
@@ -460,10 +461,12 @@ export async function backtestSymbol(
           reason: buySig.reason,
           pnl: "0",
           pnlPercent: "0",
+          fees: String(fees.totalFee.toFixed(4)),
         });
 
         state.balance -= totalBuyAmount;
         state.totalFees += fees.totalFee;
+        state.totalTrades++; // 买入时递增交易笔数
         // 成本价包含买入手续费，避免单笔 P&L 偏高
         const effectiveAvgCost = totalBuyAmount / buyQty;
         state.positions.set(symbol, {
@@ -659,6 +662,26 @@ export async function runBacktest(config: BacktestConfig): Promise<BacktestResul
       }
     }
 
+    // 计算统计指标
+    const sellTrades = state.trades.filter(t => t.type === "sell" && t.pnl !== "0");
+    const pnlValues = sellTrades.map(t => parseFloat(t.pnlPercent || "0"));
+    const winPnls = pnlValues.filter(p => p > 0);
+    const lossPnls = pnlValues.filter(p => p <= 0);
+    const avgReturn = pnlValues.length > 0 ? pnlValues.reduce((a, b) => a + b, 0) / pnlValues.length : 0;
+    const avgProfit = winPnls.length > 0 ? winPnls.reduce((a, b) => a + b, 0) / winPnls.length : 0;
+    const avgLoss = lossPnls.length > 0 ? lossPnls.reduce((a, b) => a + b, 0) / lossPnls.length : 0;
+    const maxProfit = winPnls.length > 0 ? Math.max(...winPnls) : 0;
+    const maxLoss = lossPnls.length > 0 ? Math.min(...lossPnls) : 0;
+    // Sharpe ratio (simplified: avgReturn / stdDev)
+    const stdDev = pnlValues.length > 1 ? Math.sqrt(pnlValues.reduce((sum, v) => sum + Math.pow(v - avgReturn, 2), 0) / (pnlValues.length - 1)) : 0;
+    const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) : 0;
+    // Max consecutive wins/losses
+    let maxConsecutiveWin = 0, maxConsecutiveLoss = 0, curWin = 0, curLoss = 0;
+    for (const p of pnlValues) {
+      if (p > 0) { curWin++; curLoss = 0; maxConsecutiveWin = Math.max(maxConsecutiveWin, curWin); }
+      else { curLoss++; curWin = 0; maxConsecutiveLoss = Math.max(maxConsecutiveLoss, curLoss); }
+    }
+
     // 更新会话结果
     await db.update(backtestSessions).set({
       status: "completed",
@@ -674,6 +697,14 @@ export async function runBacktest(config: BacktestConfig): Promise<BacktestResul
       totalFees: String(state.totalFees.toFixed(2)),
       equityCurve: JSON.stringify(state.equityCurve),
       completedAt: new Date(),
+      avgReturn: String(avgReturn.toFixed(4)),
+      avgProfit: String(avgProfit.toFixed(4)),
+      avgLoss: String(avgLoss.toFixed(4)),
+      maxProfit: String(maxProfit.toFixed(2)),
+      maxLoss: String(maxLoss.toFixed(2)),
+      sharpeRatio: String(sharpeRatio.toFixed(4)),
+      maxConsecutiveWin,
+      maxConsecutiveLoss,
     }).where(eq(backtestSessions.id, config.sessionId));
 
     console.log(`[Backtest] Session ${config.sessionId} completed. Return: ${totalReturn.toFixed(2)}%, Trades: ${state.totalTrades}`);

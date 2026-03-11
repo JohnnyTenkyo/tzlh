@@ -1,7 +1,7 @@
-import { cacheStockHistoricalData } from "./cacheManager";
+import { cacheStockHistoricalData, startBackgroundWarmup, stopWarmup } from "./cacheManager";
 import { getDb } from "./db";
 import { stockRecommendations } from "../drizzle/schema";
-import { eq } from "drizzle-orm";
+import type { Timeframe } from "./indicators";
 
 let updateTaskRunning = false;
 let lastUpdateTime: Date | null = null;
@@ -80,3 +80,16 @@ export function stopScheduledCacheUpdate(): void {
   updateTaskRunning = false;
   console.log("[ScheduledTasks] Scheduled cache update stopped");
 }
+
+/**
+ * 启动后台全量缓存预热（使用 Alpaca 批量 API）
+ * 自动限速恢复，可跨天运行
+ */
+export async function startFullWarmupTask(
+  symbols: string[],
+  timeframes: Timeframe[] = ["1d", "1h", "15m"]
+): Promise<void> {
+  await startBackgroundWarmup(symbols, timeframes, 50);
+}
+
+export { stopWarmup };

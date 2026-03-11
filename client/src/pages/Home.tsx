@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import {
   TrendingUp, RefreshCw, Star, Clock, BarChart2,
-  ChevronRight, AlertCircle, Zap, Target, Info, LineChart
+  ChevronRight, AlertCircle, Target, Info, LineChart
 } from "lucide-react";
 import StockChart from "@/components/StockChart";
 
@@ -401,21 +401,6 @@ export default function Home() {
                 <div>
                   <p className="font-medium text-foreground text-sm">横向对比</p>
                   <p className="text-xs text-muted-foreground">比较多个回测结果</p>
-                </div>
-                <ChevronRight size={16} className="text-muted-foreground ml-auto" />
-              </CardContent>
-            </Card>
-            <Card
-              className="bg-card border-border hover:border-primary/30 transition-all cursor-pointer"
-              onClick={() => navigate("/optimize")}
-            >
-              <CardContent className="p-4 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                  <Zap size={20} className="text-primary" />
-                </div>
-                <div>
-                  <p className="font-medium text-foreground text-sm">参数优化</p>
-                  <p className="text-xs text-muted-foreground">网格搜索最优参数</p>
                 </div>
                 <ChevronRight size={16} className="text-muted-foreground ml-auto" />
               </CardContent>

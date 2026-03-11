@@ -1,0 +1,1 @@
+ALTER TABLE `backtest_trades` ADD `fees` decimal(16,4) DEFAULT '0';

@@ -161,6 +161,7 @@ export default function BacktestDetail() {
   const [showBenchmarks, setShowBenchmarks] = useState({ QQQ: false, SPY: false });
   const [benchmarkData, setBenchmarkData] = useState<Record<string, any[]>>({});
   const [exportLoading, setExportLoading] = useState(false);
+  const [chartMode, setChartMode] = useState<"value" | "return">("value"); // 资产净值 / 收益率
 
   const exportMutation = trpc.backtest.exportData.useMutation();
   const utils = trpc.useUtils();
@@ -255,10 +256,12 @@ export default function BacktestDetail() {
 
   // 图表数据（合并基准数据）
   const chartData = equityCurve.map(p => {
+    const returnPct = initialBalance > 0 ? ((p.value - initialBalance) / initialBalance) * 100 : 0;
     const point: any = {
       date: p.date,
       value: p.value,
-      label: `${p.value.toLocaleString()}`,
+      returnPct: parseFloat(returnPct.toFixed(2)),
+      label: chartMode === "value" ? `$${p.value.toLocaleString()}` : `${returnPct.toFixed(2)}%`,
     };
     for (const [symbol, bData] of Object.entries(benchmarkData)) {
       const benchPoint = (bData as any[]).find((d: any) => d.date === p.date);
@@ -441,23 +444,45 @@ export default function BacktestDetail() {
           <TabsContent value="chart">
             <Card className="bg-card border-border">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">资产净值曲线</CardTitle>
+                <CardTitle className="text-sm font-medium">
+                  {chartMode === "value" ? "资产净值曲线" : "收益率曲线"}
+                </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="flex gap-2 mb-4">
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {/* 切换模式 */}
+                  <div className="flex rounded-md border border-border overflow-hidden">
+                    <button
+                      className={`px-3 py-1 text-xs font-medium transition-colors ${
+                        chartMode === "value" ? "bg-primary text-primary-foreground" : "bg-transparent text-muted-foreground hover:text-foreground"
+                      }`}
+                      onClick={() => setChartMode("value")}
+                    >
+                      资产净值
+                    </button>
+                    <button
+                      className={`px-3 py-1 text-xs font-medium transition-colors ${
+                        chartMode === "return" ? "bg-primary text-primary-foreground" : "bg-transparent text-muted-foreground hover:text-foreground"
+                      }`}
+                      onClick={() => setChartMode("return")}
+                    >
+                      收益率
+                    </button>
+                  </div>
+                  {/* 大盘对比（收益率模式下才有意义） */}
                   <Button
                     variant={showBenchmarks.QQQ ? "default" : "outline"}
                     size="sm"
                     onClick={() => setShowBenchmarks(p => ({ ...p, QQQ: !p.QQQ }))}
                   >
-                    {showBenchmarks.QQQ ? "隐藏" : "显示"} QQQ 基准
+                    {showBenchmarks.QQQ ? "隐藏" : "对比"} QQQ
                   </Button>
                   <Button
                     variant={showBenchmarks.SPY ? "default" : "outline"}
                     size="sm"
                     onClick={() => setShowBenchmarks(p => ({ ...p, SPY: !p.SPY }))}
                   >
-                    {showBenchmarks.SPY ? "隐藏" : "显示"} SPY 基准
+                    {showBenchmarks.SPY ? "隐藏" : "对比"} SPY
                   </Button>
                 </div>
                 {chartData.length > 0 ? (
@@ -472,7 +497,10 @@ export default function BacktestDetail() {
                       />
                       <YAxis
                         tick={{ fontSize: 10, fill: "oklch(0.60 0.02 240)" }}
-                        tickFormatter={v => `$${(v / 1000).toFixed(0)}k`}
+                        tickFormatter={chartMode === "value"
+                          ? (v: number) => `$${(v / 1000).toFixed(0)}k`
+                          : (v: number) => `${v.toFixed(1)}%`
+                        }
                       />
                       <Tooltip
                         contentStyle={{
@@ -481,23 +509,42 @@ export default function BacktestDetail() {
                           borderRadius: "6px",
                           fontSize: "12px",
                         }}
-                        formatter={(v: number) => [`$${v.toLocaleString()}`, "资产"]}
+                        formatter={(v: number, name: string) => {
+                          if (name === "returnPct") return [`${v.toFixed(2)}%`, "策略收益率"];
+                          if (name === "value") return [`$${v.toLocaleString()}`, "资产净值"];
+                          return [`${v.toFixed(2)}%`, name];
+                        }}
                       />
-                      <ReferenceLine
-                        y={initialBalance}
-                        stroke="oklch(0.60 0.02 240)"
-                        strokeDasharray="4 4"
-                        label={{ value: "初始", fontSize: 10, fill: "oklch(0.60 0.02 240)" }}
-                      />
+                      {chartMode === "value" ? (
+                        <ReferenceLine
+                          y={initialBalance}
+                          stroke="oklch(0.60 0.02 240)"
+                          strokeDasharray="4 4"
+                          label={{ value: "初始", fontSize: 10, fill: "oklch(0.60 0.02 240)" }}
+                        />
+                      ) : (
+                        <ReferenceLine
+                          y={0}
+                          stroke="oklch(0.60 0.02 240)"
+                          strokeDasharray="4 4"
+                          label={{ value: "0%", fontSize: 10, fill: "oklch(0.60 0.02 240)" }}
+                        />
+                      )}
                       <Line
                         type="monotone"
-                        dataKey="value"
+                        dataKey={chartMode === "value" ? "value" : "returnPct"}
                         stroke="oklch(0.65 0.18 220)"
                         strokeWidth={2}
                         dot={false}
                         activeDot={{ r: 4 }}
+                        name={chartMode === "value" ? "value" : "returnPct"}
                       />
-                      {showBenchmarks.QQQ && (
+                      {(showBenchmarks.QQQ || showBenchmarks.SPY) && chartMode === "value" && (
+                        <text x="50%" y={20} textAnchor="middle" fill="oklch(0.55 0.02 240)" fontSize={10}>
+                          切换到「收益率」模式可与大盘对比
+                        </text>
+                      )}
+                      {showBenchmarks.QQQ && chartMode === "return" && (
                         <Line
                           type="monotone"
                           dataKey="QQQ"
@@ -507,7 +554,7 @@ export default function BacktestDetail() {
                           name="QQQ"
                         />
                       )}
-                      {showBenchmarks.SPY && (
+                      {showBenchmarks.SPY && chartMode === "return" && (
                         <Line
                           type="monotone"
                           dataKey="SPY"
@@ -528,18 +575,20 @@ export default function BacktestDetail() {
             </Card>
 
             {/* Trade Stats */}
-            {session.status === "completed" && (
-              <div className="grid grid-cols-3 gap-3 mt-3">
+              {session.status === "completed" && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
                 <Card className="bg-card border-border">
                   <CardContent className="p-3 text-center">
-                    <p className="text-xs text-muted-foreground">总交易次数</p>
+                    <p className="text-xs text-muted-foreground">总交易笔数</p>
                     <p className="text-lg font-bold text-foreground">{session.totalTrades || 0}</p>
+                    <p className="text-xs text-muted-foreground">买入+卖出</p>
                   </CardContent>
                 </Card>
                 <Card className="bg-card border-border">
                   <CardContent className="p-3 text-center">
                     <p className="text-xs text-muted-foreground">胜率</p>
                     <p className="text-lg font-bold text-profit">{winRate ? `${winRate}%` : "--"}</p>
+                    <p className="text-xs text-muted-foreground">基于卖出笔数</p>
                   </CardContent>
                 </Card>
                 <Card className="bg-card border-border">
@@ -550,6 +599,15 @@ export default function BacktestDetail() {
                       <span className="text-muted-foreground mx-1">/</span>
                       <span className="text-loss">{session.lossTrades || 0}</span>
                     </p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-card border-border">
+                  <CardContent className="p-3 text-center">
+                    <p className="text-xs text-muted-foreground">总佣金费用</p>
+                    <p className="text-lg font-bold text-loss">
+                      {session.totalFees ? `-$${parseFloat(String(session.totalFees)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "$0"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">SEC费+佣金</p>
                   </CardContent>
                 </Card>
               </div>
@@ -631,6 +689,11 @@ export default function BacktestDetail() {
                               {SIGNAL_TYPE_LABELS[trade.signalType || ""] || trade.signalType}
                             </span>
                           </div>
+                          {trade.fees && parseFloat(String(trade.fees)) > 0 && (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              佣金: <span className="text-loss">-${parseFloat(String(trade.fees)).toFixed(4)}</span>
+                            </p>
+                          )}
                           <p className="mt-1.5 text-muted-foreground leading-relaxed">{trade.reason}</p>
                         </div>
                       );
@@ -753,7 +816,7 @@ export default function BacktestDetail() {
                       />
                       <MetricCard
                         label="失败交易"
-                        value={session.totalTrades && session.winTrades ? String(session.totalTrades - session.winTrades) : "0"}
+                        value={session.lossTrades ? String(session.lossTrades) : "0"}
                         positive={false}
                       />
                       <MetricCard

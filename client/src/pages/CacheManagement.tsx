@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { useLocation } from 'wouter';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -50,6 +51,7 @@ function getHealthIcon(rate: number | null) {
 }
 
 export default function CacheManagement() {
+  const [, navigate] = useLocation();
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'failed' | 'pending' | 'caching'>('all');
   const [page, setPage] = useState(1);
 
@@ -96,32 +98,33 @@ export default function CacheManagement() {
     onError: (err) => toast.error('操作失败', { description: err.message }),
   });
 
-  const [warmupProgress, setWarmupProgress] = useState(0);
-  const [isWarming, setIsWarming] = useState(false);
-  const warmupMut = trpc.cache.warmupAllStocks.useMutation({
-    onSuccess: (data) => {
-      setIsWarming(false);
-      setWarmupProgress(0);
-      toast.success('预热完成', { description: data.message });
-      refetchStats(); refetchList();
-    },
-    onError: (err) => {
-      setIsWarming(false);
-      toast.error('预热失败', { description: err.message });
-    },
+  // 后台预热进度查询（每 3 秒刷新一次）
+  const { data: warmupProgressData, refetch: refetchWarmup } = trpc.cache.getWarmupProgress.useQuery(undefined, {
+    refetchInterval: 3000,
   });
 
-  const handleWarmup = async () => {
-    setIsWarming(true);
-    setWarmupProgress(0);
-    try {
-      await warmupMut.mutateAsync({
-        timeframes: ['1d', '1h', '15m'],
-        daysBack: 365,
-      });
-    } catch (e) {
-      console.error('Warmup error:', e);
-    }
+  const warmupMut = trpc.cache.warmupAllStocks.useMutation({
+    onSuccess: (data) => {
+      if (data.success) {
+        toast.success('后台预热已启动', { description: data.message });
+      } else {
+        toast.warning('预热任务已在运行', { description: data.message });
+      }
+      refetchWarmup();
+    },
+    onError: (err) => toast.error('启动失败', { description: err.message }),
+  });
+
+  const stopWarmupMut = trpc.cache.stopWarmup.useMutation({
+    onSuccess: () => {
+      toast.success('后台预热已停止');
+      refetchWarmup();
+    },
+    onError: (err) => toast.error('停止失败', { description: err.message }),
+  });
+
+  const handleWarmup = () => {
+    warmupMut.mutate({ timeframes: ['1d', '1h', '15m'] });
   };
 
   // 聚合健康数据（按数据源分组）
@@ -159,9 +162,20 @@ export default function CacheManagement() {
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">缓存管理</h1>
-          <p className="text-gray-400 text-sm mt-1">管理 K 线历史数据缓存，监控各数据源健康状态</p>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate('/')}
+            className="text-gray-400 hover:text-white hover:bg-gray-700 px-2"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1"><path d="m15 18-6-6 6-6"/></svg>
+            返回
+          </Button>
+          <div>
+            <h1 className="text-2xl font-bold text-white">缓存管理</h1>
+            <p className="text-gray-400 text-sm mt-1">管理 K 线历史数据缓存，监控各数据源健康状态</p>
+          </div>
         </div>
         <Button
           variant="outline"
@@ -445,37 +459,75 @@ export default function CacheManagement() {
                   预热全部股票
                 </CardTitle>
                 <CardDescription className="text-gray-400">
-                  一键触发 793 支股票的 Alpaca 日线+分时数据批量缓存（每次 5 个并发）。
-                  预热完成后，后续回测将直接使用缓存数据，大幅加速回测启动。
+                  一键启动后台全量预热：793 支股票 × 3 个时间级别，使用 Alpaca 批量 API（每批 50 支）。
+                  遇到限速自动等待后继续，可跨天运行直到全部完成。
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {isWarming && (
-                  <div className="mb-4 space-y-2">
+                {/* 后台预热进度显示 */}
+                {warmupProgressData?.running && (
+                  <div className="mb-4 space-y-3">
                     <div className="flex justify-between text-xs text-gray-400">
-                      <span>预热进度</span>
-                      <span>{Math.round(warmupProgress)}%</span>
+                      <span className="flex items-center gap-1">
+                        <RefreshCw className="h-3 w-3 animate-spin" />
+                        后台预热运行中...
+                        {warmupProgressData.paused && <span className="text-yellow-400">(限速等待中)</span>}
+                      </span>
+                      <span>{warmupProgressData.completed}/{warmupProgressData.total}</span>
                     </div>
-                    <Progress value={warmupProgress} className="h-2" />
+                    <Progress
+                      value={warmupProgressData.total > 0 ? Math.round((warmupProgressData.completed / warmupProgressData.total) * 100) : 0}
+                      className="h-2"
+                    />
+                    <div className="grid grid-cols-2 gap-2 text-xs text-gray-400">
+                      <span>当前: {warmupProgressData.currentSymbol} / {warmupProgressData.currentTimeframe}</span>
+                      {warmupProgressData.estimatedFinishAt && (
+                        <span>预计完成: {new Date(warmupProgressData.estimatedFinishAt).toLocaleTimeString()}</span>
+                      )}
+                      <span className="text-green-400">成功: {warmupProgressData.completed}</span>
+                      <span className="text-red-400">失败: {warmupProgressData.failed}</span>
+                    </div>
+                    {warmupProgressData.paused && warmupProgressData.pauseUntil && (
+                      <Alert className="bg-yellow-500/10 border-yellow-500/30">
+                        <AlertCircle className="h-4 w-4 text-yellow-400" />
+                        <AlertDescription className="text-yellow-300 text-xs">
+                          遇到 API 限速，自动等待至 {new Date(warmupProgressData.pauseUntil).toLocaleTimeString()} 后继续
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </div>
                 )}
                 <Alert className="bg-purple-500/10 border-purple-500/30 mb-4">
                   <AlertCircle className="h-4 w-4 text-purple-400" />
                   <AlertDescription className="text-purple-300 text-sm">
-                    预热时间约 10-20 分钟（取决于网络），期间可继续使用其他功能。
+                    后台运行，不阻塞界面。已缓存的数据不重复请求，只补充新增数据。遇到限速自动等待，可跨天完成全量。
                   </AlertDescription>
                 </Alert>
-                <Button
-                  onClick={handleWarmup}
-                  disabled={isWarming || warmupMut.isPending}
-                  className="bg-purple-600 hover:bg-purple-700 text-white"
-                >
-                  {isWarming || warmupMut.isPending ? (
-                    <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />预热中...</>
-                  ) : (
-                    <><Database className="h-4 w-4 mr-2" />开始预热</>  
+                <div className="flex gap-2">
+                  <Button
+                    onClick={handleWarmup}
+                    disabled={warmupProgressData?.running || warmupMut.isPending}
+                    className="bg-purple-600 hover:bg-purple-700 text-white"
+                  >
+                    {warmupMut.isPending ? (
+                      <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />启动中...</>
+                    ) : warmupProgressData?.running ? (
+                      <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />预热运行中</>
+                    ) : (
+                      <><Database className="h-4 w-4 mr-2" />启动后台预热</>  
+                    )}
+                  </Button>
+                  {warmupProgressData?.running && (
+                    <Button
+                      onClick={() => stopWarmupMut.mutate()}
+                      disabled={stopWarmupMut.isPending}
+                      variant="outline"
+                      className="border-red-500/50 text-red-400 hover:bg-red-500/10"
+                    >
+                      停止预热
+                    </Button>
                   )}
-                </Button>
+                </div>
               </CardContent>
             </Card>
 

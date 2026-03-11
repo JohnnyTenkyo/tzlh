@@ -172,6 +172,8 @@ export const backtestTrades = mysqlTable("backtest_trades", {
   // P&L for sell trades
   pnl: decimal("pnl", { precision: 16, scale: 2 }),
   pnlPercent: decimal("pnlPercent", { precision: 10, scale: 4 }),
+  // Commission fees for this trade
+  fees: decimal("fees", { precision: 16, scale: 4 }).default("0"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
