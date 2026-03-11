@@ -10,7 +10,7 @@ async function test() {
     endDate: "2026-03-07",
     marketCapFilter: "all" as const,
     ladderTimeframe: "30m" as const,
-    cdScoreThreshold: 30,
+    cdScoreThreshold: 30 as any,
     customStocks: ["TSLA"],
     debug: false,
   };

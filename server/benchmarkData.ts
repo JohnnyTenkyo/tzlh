@@ -3,7 +3,8 @@
  */
 
 import { fetchHistoricalCandles } from "./marketData";
-import type { Timeframe } from "./types";
+import type { Timeframe } from "./indicators";
+import type { Candle } from "./cacheManager";
 
 export interface BenchmarkData {
   date: string;
@@ -36,8 +37,9 @@ export async function getBenchmarkReturns(
 
     for (const candle of candles) {
       const dailyReturn = ((candle.close - firstClose) / firstClose) * 100;
+      const candleDate = (candle as any).date || (candle as any).t || new Date().toISOString().split('T')[0];
       results.push({
-        date: candle.date,
+        date: candleDate,
         return: parseFloat(dailyReturn.toFixed(4)),
       });
     }

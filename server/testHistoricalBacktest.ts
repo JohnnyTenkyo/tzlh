@@ -7,6 +7,7 @@ import { getDb } from "./db";
 import { backtestSessions } from "../drizzle/schema";
 import { runBacktest } from "./backtestEngine";
 import { eq } from "drizzle-orm";
+import { Timeframe } from "./indicators";
 
 async function testHistoricalBacktest() {
   const db = await getDb();
@@ -48,7 +49,7 @@ async function testHistoricalBacktest() {
     startDate: "2024-03-01",
     endDate: "2024-04-30",
     marketCapFilter: "all" as any,
-    ladderTimeframe: "30m" as Timeframe,
+    ladderTimeframe: "30m" as any,
     cdScoreThreshold: 60,
     customStocks: ["TSLA"],
   });

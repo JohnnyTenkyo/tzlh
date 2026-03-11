@@ -1,6 +1,5 @@
-import { backtestSymbol } from "./backtestEngine";
 import { getDb } from "./db";
-import { backtest_sessions, backtest_trades } from "../drizzle/schema";
+import { backtestSessions, backtestTrades } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 
 /**

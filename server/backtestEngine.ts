@@ -488,14 +488,14 @@ export interface BacktestResult {
 export async function runBacktest(config: BacktestConfig): Promise<BacktestResult> {
   if (runningTasks.get(config.sessionId)) {
     console.log(`[Backtest] Session ${config.sessionId} already running`);
-    return;
+    return { trades: [], equityCurve: [], totalTrades: 0, winTrades: 0, lossTrades: 0, totalFees: 0 };
   }
 
   runningTasks.set(config.sessionId, true);
   const db = await getDb();
   if (!db) {
     runningTasks.delete(config.sessionId);
-    return;
+    return { trades: [], equityCurve: [], totalTrades: 0, winTrades: 0, lossTrades: 0, totalFees: 0 };
   }
 
   try {

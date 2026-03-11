@@ -121,20 +121,26 @@ export async function saveCandlesToCache(
     console.log(`[Cache] Saved ${candles.length} candles for ${symbol}/${timeframe}`);
   } catch (error) {
     console.error(`[Cache] Error saving candles for ${symbol}/${timeframe}:`, error);
-    // 记录错误到元数据
-    await db
-      .insert(cacheMetadata)
-      .values({
-        symbol,
-        status: "failed",
-        errorMessage: String(error),
-      })
-      .onDuplicateKeyUpdate({
-        set: {
-          status: "failed",
-          errorMessage: String(error),
-        },
-      });
+    try {
+      const db = await getDb();
+      if (db) {
+        await db
+          .insert(cacheMetadata)
+          .values({
+            symbol,
+            status: "failed",
+            errorMessage: String(error),
+          })
+          .onDuplicateKeyUpdate({
+            set: {
+              status: "failed",
+              errorMessage: String(error),
+            },
+          });
+      }
+    } catch (dbError) {
+      console.error(`[Cache] Failed to update metadata:`, dbError);
+    }
   }
 }
 
@@ -175,14 +181,21 @@ export async function cacheStockHistoricalData(symbol: string): Promise<boolean>
 
     for (const tf of timeframes) {
       try {
-        const candles = await fetchHistoricalCandles(symbol, tf, startDateStr, endDateStr);
+        const candles = await fetchHistoricalCandles(symbol, tf as any, startDateStr, endDateStr);
         if (candles && candles.length > 0) {
-          await saveCandlesToCache(symbol, tf, candles);
-          totalCandles += candles.length;
+          const formattedCandles = candles.map((c: any) => ({
+            date: c.date || (c.time ? new Date(c.time).toISOString().split('T')[0] : ''),
+            open: typeof c.open === 'string' ? parseFloat(c.open) : c.open,
+            high: typeof c.high === 'string' ? parseFloat(c.high) : c.high,
+            low: typeof c.low === 'string' ? parseFloat(c.low) : c.low,
+            close: typeof c.close === 'string' ? parseFloat(c.close) : c.close,
+            volume: typeof c.volume === 'string' ? parseFloat(c.volume) : c.volume,
+          }));
+          await saveCandlesToCache(symbol, tf, formattedCandles);
+          totalCandles += formattedCandles.length;
         }
       } catch (error) {
         console.warn(`[Cache] Failed to fetch ${symbol}/${tf}:`, error);
-        // 继续处理其他时间级别
       }
     }
 
@@ -194,19 +207,26 @@ export async function cacheStockHistoricalData(symbol: string): Promise<boolean>
     }
   } catch (error) {
     console.error(`[Cache] Failed to cache ${symbol}:`, error);
-    await db
-      .insert(cacheMetadata)
-      .values({
-        symbol,
-        status: "failed",
-        errorMessage: String(error),
-      })
-      .onDuplicateKeyUpdate({
-        set: {
-          status: "failed",
-          errorMessage: String(error),
-        },
-      });
+    try {
+      const db = await getDb();
+      if (db) {
+        await db
+          .insert(cacheMetadata)
+          .values({
+            symbol,
+            status: "failed",
+            errorMessage: String(error),
+          })
+          .onDuplicateKeyUpdate({
+            set: {
+              status: "failed",
+              errorMessage: String(error),
+            },
+          });
+      }
+    } catch (dbError) {
+      console.error(`[Cache] Failed to update cache metadata for ${symbol}:`, dbError);
+    }
     return false;
   }
 }
