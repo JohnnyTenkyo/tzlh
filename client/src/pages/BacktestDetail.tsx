@@ -266,6 +266,31 @@ export default function BacktestDetail() {
   });
 
   const initialBalance = parseFloat(String(session.initialBalance));
+  // 导出回测数据为 Excel
+  const handleExportExcel = async () => {
+    try {
+      const result = await trpc.backtest.exportData.mutate({ sessionId: session.id });
+      if (result.success) {
+        // 将 base64 转换为 Blob 并下载
+        const binaryString = atob(result.data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = result.filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      console.error('导出失败:', err);
+    }
+  };
 
   return (
     <Layout>
@@ -281,6 +306,16 @@ export default function BacktestDetail() {
             <ArrowLeft size={14} /> 返回
           </Button>
             <div className="flex-1">
+        
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportExcel}
+            disabled={session.status !== "completed"}
+            className="gap-1.5"
+          >
+            <DollarSign size={14} /> 导出 Excel
+          </Button>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-bold text-foreground">{session.name}</h1>
               {/* 策略类型徽章 */}
