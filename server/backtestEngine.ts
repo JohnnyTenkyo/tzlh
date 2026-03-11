@@ -1,3 +1,4 @@
+import { calculateTradeFees } from "./tigerTradeFees";
 /**
  * 自动回测引擎
  * 基于黄蓝梯子 + CD抄底指标的买卖逻辑
@@ -67,6 +68,7 @@ interface BacktestState {
   totalTrades: number;
   winTrades: number;
   lossTrades: number;
+  totalFees: number;
 }
 
 // 运行中的回测任务
@@ -502,6 +504,7 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
       totalTrades: 0,
       winTrades: 0,
       lossTrades: 0,
+      totalFees: 0,
     };
 
     // 所有需要的时间级别（添加所有用于 CD 分数计算的级别）
