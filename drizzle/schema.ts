@@ -7,6 +7,7 @@ import {
   mysqlTable,
   text,
   timestamp,
+  uniqueIndex,
   varchar,
 } from "drizzle-orm/mysql-core";
 
@@ -215,3 +216,24 @@ export const cacheMetadata = mysqlTable("cache_metadata", {
 
 export type CacheMetadata = typeof cacheMetadata.$inferSelect;
 export type InsertCacheMetadata = typeof cacheMetadata.$inferInsert;
+
+/**
+ * Data source health monitoring
+ * Tracks success/failure rates for each data source
+ */
+export const dataSourceHealth = mysqlTable("data_source_health", {
+  id: int("id").autoincrement().primaryKey(),
+  source: varchar("source", { length: 32 }).notNull(), // "alpaca" | "stooq" | "tiingo" | "finnhub" | "alphavantage" | "yahoo"
+  timeframe: varchar("timeframe", { length: 10 }).notNull(), // "15m" | "1h" | "1d" etc.
+  success: int("success").default(0).notNull(), // total successful requests
+  failure: int("failure").default(0).notNull(), // total failed requests
+  lastSuccess: timestamp("lastSuccess"), // last successful request time
+  lastFailure: timestamp("lastFailure"), // last failed request time
+  lastError: text("lastError"), // last error message
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  sourceTimeframeIdx: uniqueIndex("source_timeframe_idx").on(table.source, table.timeframe),
+}));
+
+export type DataSourceHealth = typeof dataSourceHealth.$inferSelect;
+export type InsertDataSourceHealth = typeof dataSourceHealth.$inferInsert;

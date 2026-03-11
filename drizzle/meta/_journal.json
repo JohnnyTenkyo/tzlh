@@ -50,6 +50,20 @@
       "when": 1773246391043,
       "tag": "0006_dizzy_mikhail_rasputin",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1773252903666,
+      "tag": "0007_late_millenium_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1773253446283,
+      "tag": "0008_salty_photon",
+      "breakpoints": true
     }
   ]
 }

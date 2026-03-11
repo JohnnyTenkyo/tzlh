@@ -364,3 +364,14 @@
 - [x] 修复 TypeScript 编译错误（全部 0 错误）
 - [x] 新增 Stooq 数据解析和手续费成本价的单元测试
 - [x] 所有 38 个单元测试通过
+
+## 第四十九轮重构（K线数据架构重构 + 数据源健康监控）
+- [x] 添加 Alpaca API Key + Secret Key 到环境变量
+- [x] 重构 marketData.ts 为三层架构（Alpaca主源+本地聚合+健康监控）
+- [x] 实现 Alpaca 作为 15m/1h/1d 主数据源（Since 2020分时/Since 2016日线）
+- [x] 实现本地聚合层：30m=15m×2, 2h=1h×2, 3h=1h×3, 4h=1h×4, 1w=1d聚合
+- [x] 实现数据源健康监控表（含唯一约束）并迁移
+- [x] 在 routers.ts 添加 cache 和 health 路由
+- [x] 重写 CacheManagement.tsx（真实数据+分时缓存清空+全部清空+健康监控面板）
+- [x] 修复 recordHealth 中的 sql 引用
+- [x] 所有测试通过（39 tests），TypeScript 零错误

@@ -1,0 +1,1 @@
+ALTER TABLE `data_source_health` ADD CONSTRAINT `source_timeframe_idx` UNIQUE(`source`,`timeframe`);

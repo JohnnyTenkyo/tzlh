@@ -10,4 +10,6 @@ export const ENV = {
   finnhubApiKey: process.env.FINNHUB_API_KEY ?? "",
   tiingoApiKey: process.env.TIINGO_API_KEY ?? "",
   alphaVantageApiKey: process.env.ALPHAVANTAGE_API_KEY ?? "",
+  alpacaApiKey: process.env.ALPACA_API_KEY ?? "",
+  alpacaSecretKey: process.env.ALPACA_SECRET_KEY ?? "",
 };

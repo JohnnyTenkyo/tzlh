@@ -1,17 +1,95 @@
 /**
- * 股票市场数据获取
- * 日线/周线主数据源：Stooq（免费、无限制、历史完整 20+ 年）
- * 分时主数据源：Tiingo IEX（/iex/<ticker>/prices 端点，支持 2 年历史）
- * 备用数据源：Finnhub、Alpha Vantage、Yahoo Finance
+ * 股票市场数据获取 - 三层架构
+ *
+ * 第一层：原始数据层（基准周期）
+ *   - 15m：Alpaca（Since 2020）> Tiingo IEX > Finnhub > Alpha Vantage > Yahoo
+ *   - 1h ：Alpaca（Since 2020）> Tiingo IEX > Finnhub > Alpha Vantage > Yahoo
+ *   - 1d ：Stooq（20+年）> Alpaca（Since 2016）> Tiingo Daily > Finnhub > Alpha Vantage > Yahoo
+ *
+ * 第二层：聚合层（从基准周期本地聚合，不再请求外部 API）
+ *   - 30m = 15m × 2
+ *   - 2h  = 1h × 2
+ *   - 3h  = 1h × 3
+ *   - 4h  = 1h × 4
+ *   - 1w  = 1d 按交易周聚合
+ *
+ * 第三层：健康监控层
+ *   - 记录每个数据源的成功/失败次数
+ *   - 支持查询各数据源健康状态
  */
+
 import axios from "axios";
 import type { Candle, Timeframe } from "./indicators";
 import { ENV } from "./_core/env";
+import { getDb } from "./db";
+import { dataSourceHealth } from "../drizzle/schema";
+import { and, eq, sql } from "drizzle-orm";
+
+// ============================================================
+// 类型定义
+// ============================================================
+
+type DataSource = "alpaca" | "stooq" | "tiingo" | "finnhub" | "alphavantage" | "yahoo";
+
+// 基准周期（直接从外部 API 获取）
+const BASE_TIMEFRAMES: Timeframe[] = ["15m", "1h", "1d"];
+
+// 聚合周期（从基准周期本地聚合）
+const AGGREGATED_TIMEFRAMES: Partial<Record<Timeframe, { base: Timeframe; factor: number; mode: "fixed" | "week" }>> = {
+  "30m": { base: "15m", factor: 2, mode: "fixed" },
+  "2h":  { base: "1h",  factor: 2, mode: "fixed" },
+  "3h":  { base: "1h",  factor: 3, mode: "fixed" },
+  "4h":  { base: "1h",  factor: 4, mode: "fixed" },
+  "1w":  { base: "1d",  factor: 5, mode: "week"  },
+};
+
+// ============================================================
+// 健康监控
+// ============================================================
+
+async function recordHealth(source: DataSource, timeframe: string, success: boolean, error?: string): Promise<void> {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    const now = new Date();
+    await db
+      .insert(dataSourceHealth)
+      .values({
+        source,
+        timeframe,
+        success: success ? 1 : 0,
+        failure: success ? 0 : 1,
+        lastSuccess: success ? now : undefined,
+        lastFailure: success ? undefined : now,
+        lastError: success ? undefined : error?.slice(0, 500),
+      })
+      .onDuplicateKeyUpdate({
+        set: {
+          success: success
+            ? sql`success + 1`
+            : sql`success`,
+          failure: success
+            ? sql`failure`
+            : sql`failure + 1`,
+          lastSuccess: success ? now : undefined,
+          lastFailure: success ? undefined : now,
+          lastError: success ? undefined : error?.slice(0, 500),
+        },
+      });
+  } catch {
+    // 健康监控失败不影响主流程
+  }
+}
+
+// ============================================================
+// 聚合工具函数
+// ============================================================
 
 /**
- * 将1h K线聚合为2h/3h/4h K线
+ * 将 K 线按固定数量聚合（例如 15m×2 = 30m）
+ * 锚点固定在 09:30 ET，最后一根允许短 bar
  */
-function resampleCandles(candles: Candle[], factor: number): Candle[] {
+function aggregateByFactor(candles: Candle[], factor: number): Candle[] {
   const result: Candle[] = [];
   for (let i = 0; i < candles.length; i += factor) {
     const chunk = candles.slice(i, i + factor);
@@ -19,8 +97,8 @@ function resampleCandles(candles: Candle[], factor: number): Candle[] {
     result.push({
       time: chunk[0].time,
       open: chunk[0].open,
-      high: Math.max(...chunk.map(c => c.high)),
-      low: Math.min(...chunk.map(c => c.low)),
+      high: Math.max(...chunk.map((c) => c.high)),
+      low: Math.min(...chunk.map((c) => c.low)),
       close: chunk[chunk.length - 1].close,
       volume: chunk.reduce((s, c) => s + c.volume, 0),
     });
@@ -29,59 +107,164 @@ function resampleCandles(candles: Candle[], factor: number): Candle[] {
 }
 
 /**
- * 将 US 股票代码转换为 Stooq 格式（AAPL -> aapl.us）
+ * 将日线按交易周聚合为周线
+ * 周一为一周开始，周五为结束
  */
-function toStooqSymbol(symbol: string): string {
-  // 如果已经包含 .us 后缀则直接返回
-  if (symbol.toLowerCase().includes('.')) return symbol.toLowerCase();
-  return `${symbol.toLowerCase()}.us`;
+function aggregateToWeekly(dailyCandles: Candle[]): Candle[] {
+  const weeks: Map<string, Candle[]> = new Map();
+  for (const c of dailyCandles) {
+    const d = new Date(c.time);
+    // 计算本周一的日期作为 key
+    const day = d.getUTCDay(); // 0=Sun, 1=Mon...
+    const daysToMonday = day === 0 ? -6 : 1 - day;
+    const monday = new Date(d.getTime() + daysToMonday * 86400000);
+    const key = monday.toISOString().split("T")[0];
+    if (!weeks.has(key)) weeks.set(key, []);
+    weeks.get(key)!.push(c);
+  }
+  const result: Candle[] = [];
+  for (const [, chunk] of Array.from(weeks.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+    if (chunk.length === 0) continue;
+    result.push({
+      time: chunk[0].time,
+      open: chunk[0].open,
+      high: Math.max(...chunk.map((c) => c.high)),
+      low: Math.min(...chunk.map((c) => c.low)),
+      close: chunk[chunk.length - 1].close,
+      volume: chunk.reduce((s, c) => s + c.volume, 0),
+    });
+  }
+  return result;
+}
+
+// ============================================================
+// 第一层：各数据源原始数据获取
+// ============================================================
+
+/**
+ * Alpaca Markets Data API
+ * 支持：15m（2020+）、1h（2020+）、1d（2016+）
+ * 频率：200次/分钟（免费 Basic）
+ * 分页：通过 next_page_token 获取全量数据
+ */
+async function fetchAlpacaCandles(
+  symbol: string,
+  timeframe: Timeframe,
+  startDate?: string,
+  endDate?: string
+): Promise<Candle[]> {
+  const apiKey = ENV.alpacaApiKey;
+  const secretKey = ENV.alpacaSecretKey;
+  if (!apiKey || !secretKey) throw new Error("ALPACA_API_KEY or ALPACA_SECRET_KEY not set");
+
+  // Alpaca 只支持基准周期
+  if (!BASE_TIMEFRAMES.includes(timeframe)) {
+    throw new Error(`Alpaca does not support ${timeframe} (use base timeframes only)`);
+  }
+
+  const tfMap: Record<string, string> = {
+    "15m": "15Min",
+    "1h":  "1Hour",
+    "1d":  "1Day",
+  };
+  const alpacaTf = tfMap[timeframe];
+  if (!alpacaTf) throw new Error(`Alpaca unsupported timeframe: ${timeframe}`);
+
+  const now = new Date();
+  const defaultEnd = endDate || now.toISOString().split("T")[0];
+  const defaultStart = startDate || (() => {
+    const d = new Date(now);
+    d.setFullYear(d.getFullYear() - (timeframe === "1d" ? 10 : 5));
+    return d.toISOString().split("T")[0];
+  })();
+
+  const headers = {
+    "APCA-API-KEY-ID": apiKey,
+    "APCA-API-SECRET-KEY": secretKey,
+  };
+
+  const allCandles: Candle[] = [];
+  let nextPageToken: string | null = null;
+  let pageCount = 0;
+  const maxPages = 50; // 防止无限循环
+
+  do {
+    const params: Record<string, any> = {
+      symbols: symbol,
+      timeframe: alpacaTf,
+      start: defaultStart,
+      end: defaultEnd,
+      limit: 10000,
+      adjustment: "all", // 复权数据
+    };
+    if (nextPageToken) params.page_token = nextPageToken;
+
+    const res = await axios.get("https://data.alpaca.markets/v2/stocks/bars", {
+      params,
+      headers,
+      timeout: 20000,
+    });
+
+    const bars = res.data?.bars?.[symbol];
+    if (!Array.isArray(bars) || bars.length === 0) break;
+
+    for (const bar of bars) {
+      allCandles.push({
+        time: new Date(bar.t).getTime(),
+        open: bar.o,
+        high: bar.h,
+        low: bar.l,
+        close: bar.c,
+        volume: bar.v || 0,
+      });
+    }
+
+    nextPageToken = res.data?.next_page_token || null;
+    pageCount++;
+  } while (nextPageToken && pageCount < maxPages);
+
+  if (allCandles.length === 0) {
+    throw new Error(`Alpaca returned no data for ${symbol}/${timeframe}`);
+  }
+
+  return allCandles.sort((a, b) => a.time - b.time);
 }
 
 /**
- * 从 Stooq 获取日线/周线数据（免费、无限制、历史完整 20+ 年）
- * 端点：https://stooq.com/q/d/l/?s=<symbol>&d1=<YYYYMMDD>&d2=<YYYYMMDD>&i=<d|w>
+ * Stooq CSV 数据（日线/周线，免费，20+年历史）
  */
+function toStooqSymbol(symbol: string): string {
+  if (symbol.toLowerCase().includes(".")) return symbol.toLowerCase();
+  return `${symbol.toLowerCase()}.us`;
+}
+
 async function fetchStooqCandles(
   symbol: string,
   timeframe: Timeframe,
   startDate?: string,
   endDate?: string
 ): Promise<Candle[]> {
-  // Stooq 只支持日线和周线
-  if (timeframe !== "1d" && timeframe !== "1w") {
+  if (timeframe !== "1d") {
     throw new Error(`Stooq does not support ${timeframe} timeframe`);
   }
-
   const stooqSymbol = toStooqSymbol(symbol);
-  const interval = timeframe === "1w" ? "w" : "d";
-
-  // 默认获取 10 年历史
   const now = new Date();
   const defaultEnd = endDate || now.toISOString().split("T")[0];
   const defaultStart = startDate || new Date(now.getTime() - 10 * 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-
   const d1 = defaultStart.replace(/-/g, "");
   const d2 = defaultEnd.replace(/-/g, "");
-
-  const url = `https://stooq.com/q/d/l/?s=${stooqSymbol}&d1=${d1}&d2=${d2}&i=${interval}`;
-
+  const url = `https://stooq.com/q/d/l/?s=${stooqSymbol}&d1=${d1}&d2=${d2}&i=d`;
   const res = await axios.get(url, {
     timeout: 15000,
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    },
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
     responseType: "text",
   });
-
   const text: string = res.data;
   if (!text || text.includes("No data") || text.includes("Warning:")) {
     throw new Error(`Stooq returned no data for ${symbol}/${timeframe}`);
   }
-
   const lines = text.trim().split("\n");
   if (lines.length < 2) throw new Error("Stooq: insufficient data rows");
-
-  // 跳过标题行
   const candles: Candle[] = [];
   for (let i = 1; i < lines.length; i++) {
     const parts = lines[i].trim().split(",");
@@ -98,14 +281,12 @@ async function fetchStooqCandles(
       volume: volume ? parseInt(volume) : 0,
     });
   }
-
   return candles.sort((a, b) => a.time - b.time);
 }
 
 /**
- * 从 Tiingo IEX 获取分时数据（正确端点：/iex/<ticker>/prices）
- * 支持 resampleFreq: 5min, 15min, 30min, 1hour 等
- * 历史数据范围：约 2 年
+ * Tiingo IEX 分时数据（正确端点：/iex/<ticker>/prices）
+ * 支持约 2 年历史
  */
 async function fetchTiingoIntradayCandles(
   symbol: string,
@@ -115,60 +296,35 @@ async function fetchTiingoIntradayCandles(
 ): Promise<Candle[]> {
   const apiKey = ENV.tiingoApiKey;
   if (!apiKey) throw new Error("TIINGO_API_KEY not set");
-
-  const resampleFreqMap: Partial<Record<Timeframe, string>> = {
-    "15m": "15min",
-    "30m": "30min",
-    "1h":  "1hour",
-    "2h":  "1hour",  // 需要合并
-    "3h":  "1hour",  // 需要合并
-    "4h":  "1hour",  // 需要合并
-  };
-
-  const resampleFreq = resampleFreqMap[timeframe];
-  if (!resampleFreq) throw new Error(`Tiingo IEX does not support ${timeframe} timeframe`);
-
+  if (timeframe !== "15m" && timeframe !== "1h") {
+    throw new Error(`Tiingo IEX does not support ${timeframe} as base timeframe`);
+  }
+  const resampleFreq = timeframe === "15m" ? "15min" : "1hour";
   const now = new Date();
-  // Tiingo IEX 支持约 2 年的历史分时数据
   const defaultStart = startDate || new Date(now.getTime() - 730 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
   const defaultEnd = endDate || now.toISOString().split("T")[0];
-
   const url = `https://api.tiingo.com/iex/${encodeURIComponent(symbol)}/prices`;
-  const params = {
-    startDate: defaultStart,
-    endDate: defaultEnd,
-    resampleFreq,
-    columns: "open,high,low,close,volume",
-    token: apiKey,
-  };
-
-  const res = await axios.get(url, { params, timeout: 20000 });
-
+  const res = await axios.get(url, {
+    params: { startDate: defaultStart, endDate: defaultEnd, resampleFreq, columns: "open,high,low,close,volume", token: apiKey },
+    timeout: 20000,
+  });
   if (!Array.isArray(res.data) || res.data.length === 0) {
     throw new Error(`No intraday data from Tiingo IEX for ${symbol}/${timeframe}`);
   }
-
-  const candles: Candle[] = res.data.map((item: any) => ({
-    time: new Date(item.date).getTime(),
-    open: item.open || item.close,
-    high: item.high || item.close,
-    low: item.low || item.close,
-    close: item.close,
-    volume: item.volume || 0,
-  }));
-
-  const sorted = candles.sort((a, b) => a.time - b.time);
-
-  // 聚合为2h/3h/4h
-  if (timeframe === "2h") return resampleCandles(sorted, 2);
-  if (timeframe === "3h") return resampleCandles(sorted, 3);
-  if (timeframe === "4h") return resampleCandles(sorted, 4);
-
-  return sorted;
+  return res.data
+    .map((item: any) => ({
+      time: new Date(item.date).getTime(),
+      open: item.open || item.close,
+      high: item.high || item.close,
+      low: item.low || item.close,
+      close: item.close,
+      volume: item.volume || 0,
+    }))
+    .sort((a: Candle, b: Candle) => a.time - b.time);
 }
 
 /**
- * 从 Tiingo 日线 API 获取数据（备用，端点：/tiingo/daily/<ticker>/prices）
+ * Tiingo 日线 API（备用）
  */
 async function fetchTiingoDailyCandles(
   symbol: string,
@@ -178,29 +334,17 @@ async function fetchTiingoDailyCandles(
 ): Promise<Candle[]> {
   const apiKey = ENV.tiingoApiKey;
   if (!apiKey) throw new Error("TIINGO_API_KEY not set");
-
-  if (timeframe !== "1d" && timeframe !== "1w") {
-    throw new Error(`Tiingo daily API does not support ${timeframe} timeframe`);
-  }
-
+  if (timeframe !== "1d") throw new Error(`Tiingo daily API does not support ${timeframe}`);
   const now = new Date();
   const defaultStart = startDate || new Date(now.getTime() - 3650 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
   const defaultEnd = endDate || now.toISOString().split("T")[0];
-
-  const url = `https://api.tiingo.com/tiingo/daily/${encodeURIComponent(symbol)}/prices`;
-  const params = {
-    startDate: defaultStart,
-    endDate: defaultEnd,
-    resampleFreq: timeframe === "1w" ? "weekly" : "daily",
-    token: apiKey,
-  };
-
-  const res = await axios.get(url, { params, timeout: 15000 });
-
+  const res = await axios.get(`https://api.tiingo.com/tiingo/daily/${encodeURIComponent(symbol)}/prices`, {
+    params: { startDate: defaultStart, endDate: defaultEnd, resampleFreq: "daily", token: apiKey },
+    timeout: 15000,
+  });
   if (!Array.isArray(res.data) || res.data.length === 0) {
-    throw new Error(`No data from Tiingo daily for ${symbol}/${timeframe}`);
+    throw new Error(`No data from Tiingo daily for ${symbol}`);
   }
-
   return res.data
     .map((item: any) => ({
       time: new Date(item.date).getTime(),
@@ -214,7 +358,7 @@ async function fetchTiingoDailyCandles(
 }
 
 /**
- * 从 Finnhub 获取 K 线数据
+ * Finnhub（备用）
  */
 async function fetchFinnhubCandles(
   symbol: string,
@@ -224,31 +368,29 @@ async function fetchFinnhubCandles(
 ): Promise<Candle[]> {
   const apiKey = ENV.finnhubApiKey;
   if (!apiKey) throw new Error("FINNHUB_API_KEY not set");
-
-  const resolutionMap: Record<Timeframe, { resolution: string; days: number }> = {
+  if (!BASE_TIMEFRAMES.includes(timeframe)) {
+    throw new Error(`Finnhub: ${timeframe} is not a base timeframe`);
+  }
+  const resolutionMap: Record<string, { resolution: string; days: number }> = {
     "15m": { resolution: "15", days: 60 },
-    "30m": { resolution: "30", days: 60 },
     "1h":  { resolution: "60", days: 730 },
-    "2h":  { resolution: "120", days: 730 },
-    "3h":  { resolution: "180", days: 730 },
-    "4h":  { resolution: "240", days: 730 },
     "1d":  { resolution: "D", days: 3650 },
-    "1w":  { resolution: "W", days: 7300 },
   };
-
   const { resolution, days } = resolutionMap[timeframe];
   const now = Math.floor(Date.now() / 1000);
-  const from = now - days * 86400;
-
+  const fromTs = startDate
+    ? Math.floor(new Date(startDate).getTime() / 1000)
+    : now - days * 86400;
+  const toTs = endDate
+    ? Math.floor(new Date(endDate + "T23:59:59Z").getTime() / 1000)
+    : now;
   const res = await axios.get("https://finnhub.io/api/v1/stock/candle", {
-    params: { symbol, resolution, from, to: now, token: apiKey },
+    params: { symbol, resolution, from: fromTs, to: toTs, token: apiKey },
     timeout: 15000,
   });
-
   const data = res.data;
   if (data.s !== "ok" || !data.t) throw new Error("No data from Finnhub");
-
-  const candles: Candle[] = data.t.map((t: number, i: number) => ({
+  return data.t.map((t: number, i: number) => ({
     time: t * 1000,
     open: data.o[i],
     high: data.h[i],
@@ -256,17 +398,10 @@ async function fetchFinnhubCandles(
     close: data.c[i],
     volume: data.v[i] || 0,
   }));
-
-  // 聚合为2h/3h/4h
-  if (timeframe === "2h") return resampleCandles(candles, 2);
-  if (timeframe === "3h") return resampleCandles(candles, 3);
-  if (timeframe === "4h") return resampleCandles(candles, 4);
-
-  return candles;
 }
 
 /**
- * 从 Alpha Vantage 获取 K 线数据
+ * Alpha Vantage（备用，月切片补旧数据）
  */
 async function fetchAlphaVantageCandles(
   symbol: string,
@@ -276,45 +411,29 @@ async function fetchAlphaVantageCandles(
 ): Promise<Candle[]> {
   const apiKey = ENV.alphaVantageApiKey;
   if (!apiKey) throw new Error("ALPHAVANTAGE_API_KEY not set");
-
-  const functionMap: Record<Timeframe, string> = {
+  if (!BASE_TIMEFRAMES.includes(timeframe)) {
+    throw new Error(`AlphaVantage: ${timeframe} is not a base timeframe`);
+  }
+  const functionMap: Record<string, string> = {
     "15m": "TIME_SERIES_INTRADAY",
-    "30m": "TIME_SERIES_INTRADAY",
     "1h":  "TIME_SERIES_INTRADAY",
-    "2h":  "TIME_SERIES_INTRADAY",
-    "3h":  "TIME_SERIES_INTRADAY",
-    "4h":  "TIME_SERIES_INTRADAY",
     "1d":  "TIME_SERIES_DAILY",
-    "1w":  "TIME_SERIES_WEEKLY",
   };
-
-  const intervalMap: Record<Timeframe, string> = {
+  const intervalMap: Record<string, string> = {
     "15m": "15min",
-    "30m": "30min",
     "1h":  "60min",
-    "2h":  "60min",
-    "3h":  "60min",
-    "4h":  "60min",
     "1d":  "",
-    "1w":  "",
   };
-
   const func = functionMap[timeframe];
   const interval = intervalMap[timeframe];
-  const params: any = { symbol, apikey: apiKey, outputsize: "full" };
+  const params: any = { symbol, apikey: apiKey, outputsize: "full", function: func };
   if (interval) params.interval = interval;
-
-  const res = await axios.get("https://www.alphavantage.co/query", {
-    params: { ...params, function: func },
-    timeout: 15000,
-  });
-
+  const res = await axios.get("https://www.alphavantage.co/query", { params, timeout: 15000 });
   const data = res.data;
-  const timeSeriesKey = Object.keys(data).find(k => k.startsWith("Time Series"));
+  const timeSeriesKey = Object.keys(data).find((k) => k.startsWith("Time Series"));
   if (!timeSeriesKey || !data[timeSeriesKey]) throw new Error("No data from Alpha Vantage");
-
   const timeSeries = data[timeSeriesKey];
-  const candles: Candle[] = Object.entries(timeSeries)
+  return Object.entries(timeSeries)
     .map(([time, values]: any) => ({
       time: new Date(time).getTime(),
       open: parseFloat(values["1. open"]),
@@ -324,16 +443,10 @@ async function fetchAlphaVantageCandles(
       volume: parseInt(values["5. volume"] || "0"),
     }))
     .sort((a, b) => a.time - b.time);
-
-  if (timeframe === "2h") return resampleCandles(candles, 2);
-  if (timeframe === "3h") return resampleCandles(candles, 3);
-  if (timeframe === "4h") return resampleCandles(candles, 4);
-
-  return candles;
 }
 
 /**
- * 从 Yahoo Finance 获取 K 线数据（最后备用）
+ * Yahoo Finance（最后备用）
  */
 async function fetchYahooCandles(
   symbol: string,
@@ -341,49 +454,26 @@ async function fetchYahooCandles(
   startDate?: string,
   endDate?: string
 ): Promise<Candle[]> {
-  const RANGE_MAP: Record<Timeframe, string> = {
-    "15m": "60d",
-    "30m": "60d",
-    "1h":  "730d",
-    "2h":  "730d",
-    "3h":  "730d",
-    "4h":  "730d",
-    "1d":  "10y",
-    "1w":  "20y",
-  };
-
-  const INTERVAL_MAP: Record<Timeframe, string> = {
-    "15m": "15m",
-    "30m": "30m",
-    "1h":  "60m",
-    "2h":  "60m",
-    "3h":  "60m",
-    "4h":  "60m",
-    "1d":  "1d",
-    "1w":  "1wk",
-  };
-
+  if (!BASE_TIMEFRAMES.includes(timeframe)) {
+    throw new Error(`Yahoo: ${timeframe} is not a base timeframe`);
+  }
+  const RANGE_MAP: Record<string, string> = { "15m": "60d", "1h": "730d", "1d": "10y" };
+  const INTERVAL_MAP: Record<string, string> = { "15m": "15m", "1h": "60m", "1d": "1d" };
   const interval = INTERVAL_MAP[timeframe];
   const range = RANGE_MAP[timeframe];
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
-
   const res = await axios.get(url, {
     params: { interval, range },
     timeout: 15000,
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    },
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
   });
-
   const result = res.data?.chart?.result?.[0];
   if (!result) throw new Error("No data from Yahoo Finance");
-
   const timestamps: number[] = result.timestamp || [];
   const quotes = result.indicators.quote[0];
-
   const candles: Candle[] = [];
   for (let i = 0; i < timestamps.length; i++) {
-    if (quotes.close[i] !== null && quotes.close[i] !== undefined) {
+    if (quotes.close[i] != null) {
       candles.push({
         time: timestamps[i] * 1000,
         open: quotes.open[i] || quotes.close[i],
@@ -394,19 +484,105 @@ async function fetchYahooCandles(
       });
     }
   }
-
-  if (timeframe === "2h") return resampleCandles(candles, 2);
-  if (timeframe === "3h") return resampleCandles(candles, 3);
-  if (timeframe === "4h") return resampleCandles(candles, 4);
-
   return candles;
 }
 
+// ============================================================
+// 第二层：聚合层
+// ============================================================
+
 /**
- * 获取 K 线数据（多源策略）
- *
- * 日线/周线：Stooq（免费完整）> Tiingo Daily > Finnhub > Alpha Vantage > Yahoo
- * 分时数据：Tiingo IEX（正确端点）> Finnhub > Alpha Vantage > Yahoo
+ * 从基准周期聚合出目标周期 K 线
+ */
+async function getAggregatedCandles(
+  symbol: string,
+  timeframe: Timeframe,
+  startDate?: string,
+  endDate?: string
+): Promise<Candle[]> {
+  const agg = AGGREGATED_TIMEFRAMES[timeframe];
+  if (!agg) throw new Error(`${timeframe} is not an aggregated timeframe`);
+
+  // 获取基准周期数据（稍微扩大范围以确保聚合边界完整）
+  const baseCandles = await getRawCandles(symbol, agg.base, startDate, endDate);
+  if (baseCandles.length === 0) return [];
+
+  if (agg.mode === "week") {
+    return aggregateToWeekly(baseCandles);
+  } else {
+    return aggregateByFactor(baseCandles, agg.factor);
+  }
+}
+
+// ============================================================
+// 第三层：统一入口（带健康监控）
+// ============================================================
+
+/**
+ * 获取基准周期原始数据（15m / 1h / 1d）
+ * 按优先级尝试各数据源，记录健康状态
+ */
+async function getRawCandles(
+  symbol: string,
+  timeframe: Timeframe,
+  startDate?: string,
+  endDate?: string
+): Promise<Candle[]> {
+  // 定义各基准周期的数据源优先级
+  const sourceChains: Record<string, Array<{ name: DataSource; fn: Function }>> = {
+    "1d": [
+      { name: "stooq",       fn: fetchStooqCandles },
+      { name: "alpaca",      fn: fetchAlpacaCandles },
+      { name: "tiingo",      fn: fetchTiingoDailyCandles },
+      { name: "finnhub",     fn: fetchFinnhubCandles },
+      { name: "alphavantage",fn: fetchAlphaVantageCandles },
+      { name: "yahoo",       fn: fetchYahooCandles },
+    ],
+    "1h": [
+      { name: "alpaca",      fn: fetchAlpacaCandles },
+      { name: "tiingo",      fn: fetchTiingoIntradayCandles },
+      { name: "finnhub",     fn: fetchFinnhubCandles },
+      { name: "alphavantage",fn: fetchAlphaVantageCandles },
+      { name: "yahoo",       fn: fetchYahooCandles },
+    ],
+    "15m": [
+      { name: "alpaca",      fn: fetchAlpacaCandles },
+      { name: "tiingo",      fn: fetchTiingoIntradayCandles },
+      { name: "finnhub",     fn: fetchFinnhubCandles },
+      { name: "alphavantage",fn: fetchAlphaVantageCandles },
+      { name: "yahoo",       fn: fetchYahooCandles },
+    ],
+  };
+
+  const chain = sourceChains[timeframe];
+  if (!chain) throw new Error(`No source chain for base timeframe: ${timeframe}`);
+
+  for (const source of chain) {
+    try {
+      console.log(`[MarketData] Trying ${source.name} for ${symbol}/${timeframe}...`);
+      const candles = await source.fn(symbol, timeframe, startDate, endDate);
+      if (candles.length > 0) {
+        console.log(`[MarketData] ✓ ${source.name} → ${candles.length} candles for ${symbol}/${timeframe}`);
+        // 异步记录成功（不阻塞主流程）
+        recordHealth(source.name, timeframe, true).catch(() => {});
+        return candles;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[MarketData] ✗ ${source.name} failed for ${symbol}/${timeframe}: ${msg}`);
+      // 异步记录失败
+      recordHealth(source.name, timeframe, false, msg).catch(() => {});
+    }
+  }
+
+  console.error(`[MarketData] All sources failed for ${symbol}/${timeframe}`);
+  return [];
+}
+
+/**
+ * 公共入口：获取任意周期 K 线
+ * - 基准周期（15m/1h/1d）：直接从外部 API 获取
+ * - 聚合周期（30m/2h/3h/4h/1w）：从基准周期本地聚合
  */
 export async function fetchCandles(
   symbol: string,
@@ -414,43 +590,13 @@ export async function fetchCandles(
   startDate?: string,
   endDate?: string
 ): Promise<Candle[]> {
-  const isDaily = timeframe === "1d" || timeframe === "1w";
-
-  const sources = isDaily
-    ? [
-        { name: "Stooq", fn: fetchStooqCandles },
-        { name: "Tiingo Daily", fn: fetchTiingoDailyCandles },
-        { name: "Finnhub", fn: fetchFinnhubCandles },
-        { name: "Alpha Vantage", fn: fetchAlphaVantageCandles },
-        { name: "Yahoo Finance", fn: fetchYahooCandles },
-      ]
-    : [
-        { name: "Tiingo IEX", fn: fetchTiingoIntradayCandles },
-        { name: "Finnhub", fn: fetchFinnhubCandles },
-        { name: "Alpha Vantage", fn: fetchAlphaVantageCandles },
-        { name: "Yahoo Finance", fn: fetchYahooCandles },
-      ];
-
-  for (const source of sources) {
-    try {
-      console.log(`[MarketData] Trying ${source.name} for ${symbol}/${timeframe}...`);
-      const candles = await source.fn(symbol, timeframe, startDate, endDate);
-      if (candles.length > 0) {
-        console.log(
-          `[MarketData] Success: ${source.name} returned ${candles.length} candles for ${symbol}/${timeframe}`
-        );
-        return candles;
-      }
-    } catch (err) {
-      console.warn(
-        `[MarketData] ${source.name} failed for ${symbol}/${timeframe}:`,
-        err instanceof Error ? err.message : err
-      );
-    }
+  if (BASE_TIMEFRAMES.includes(timeframe)) {
+    return getRawCandles(symbol, timeframe, startDate, endDate);
   }
-
-  console.error(`[MarketData] All sources failed for ${symbol}/${timeframe}`);
-  return [];
+  if (AGGREGATED_TIMEFRAMES[timeframe]) {
+    return getAggregatedCandles(symbol, timeframe, startDate, endDate);
+  }
+  throw new Error(`Unsupported timeframe: ${timeframe}`);
 }
 
 /**
@@ -463,12 +609,10 @@ export async function fetchHistoricalCandles(
   endDate: string
 ): Promise<Candle[]> {
   const candles = await fetchCandles(symbol, timeframe, startDate, endDate);
-
   const startTs = new Date(`${startDate}T00:00:00.000Z`).getTime();
   const endTs = new Date(`${endDate}T23:59:59.999Z`).getTime();
-
   return candles
-    .filter(c => Number.isFinite(c.time) && c.time >= startTs && c.time <= endTs)
+    .filter((c) => Number.isFinite(c.time) && c.time >= startTs && c.time <= endTs)
     .sort((a, b) => a.time - b.time);
 }
 
@@ -484,25 +628,18 @@ export async function fetchQuote(
       {
         params: { modules: "price" },
         timeout: 10000,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        },
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
       }
     );
-
     const price = res.data?.quoteSummary?.result?.[0]?.price;
     if (!price) throw new Error("No price data");
-
     return {
       price: price.regularMarketPrice?.raw || 0,
       change: price.regularMarketChange?.raw || 0,
       changePercent: price.regularMarketChangePercent?.raw || 0,
     };
   } catch (err) {
-    console.warn(
-      `[MarketData] Failed to fetch quote for ${symbol}:`,
-      err instanceof Error ? err.message : err
-    );
+    console.warn(`[MarketData] Failed to fetch quote for ${symbol}:`, err instanceof Error ? err.message : err);
     throw err;
   }
 }

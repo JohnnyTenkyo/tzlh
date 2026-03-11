@@ -20,6 +20,8 @@ import { runBacktest, isBacktestRunning } from "./backtestEngine";
 import { calculateLadder } from "./indicators";
 import type { Timeframe } from "./indicators";
 import { fetchHistoricalCandles } from "./marketData";
+import { dataSourceHealth, cacheMetadata, historicalCandleCache } from "../drizzle/schema";
+import { sql } from "drizzle-orm";
 
 const JWT_SECRET = process.env.JWT_SECRET || "quant-backtest-secret-key";
 
@@ -419,6 +421,105 @@ export const appRouter = router({
         const data = await getBenchmarkReturns(input.symbol, input.startDate, input.endDate);
         return { success: true, data };
       }),
+  }),
+
+  // ============ 缓存管理 ============
+  cache: router({
+    getStats: publicProcedure.query(async () => {
+      const db = await getDb();
+      if (!db) return { total: 0, completed: 0, failed: 0, pending: 0, caching: 0, totalCandles: 0 };
+      const stats = await db
+        .select({ status: cacheMetadata.status, count: sql<number>`COUNT(*)` })
+        .from(cacheMetadata)
+        .groupBy(cacheMetadata.status);
+      const result = { total: 0, completed: 0, failed: 0, pending: 0, caching: 0, totalCandles: 0 };
+      for (const row of stats) {
+        const count = Number(row.count);
+        result.total += count;
+        if (row.status === 'completed') result.completed = count;
+        else if (row.status === 'failed') result.failed = count;
+        else if (row.status === 'pending') result.pending = count;
+        else if (row.status === 'caching') result.caching = count;
+      }
+      const candleCount = await db.select({ count: sql<number>`COUNT(*)` }).from(historicalCandleCache);
+      result.totalCandles = Number(candleCount[0]?.count || 0);
+      return result;
+    }),
+
+    getList: publicProcedure
+      .input(z.object({
+        page: z.number().default(1),
+        pageSize: z.number().default(50),
+        status: z.enum(['all', 'completed', 'failed', 'pending', 'caching']).default('all'),
+      }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) return { items: [], total: 0 };
+        const condition = input.status !== 'all'
+          ? eq(cacheMetadata.status, input.status as any)
+          : undefined;
+        const items = await db.select().from(cacheMetadata)
+          .where(condition)
+          .orderBy(desc(cacheMetadata.lastUpdated))
+          .limit(input.pageSize)
+          .offset((input.page - 1) * input.pageSize);
+        const totalRows = await db.select({ count: sql<number>`COUNT(*)` })
+          .from(cacheMetadata).where(condition);
+        return { items, total: Number(totalRows[0]?.count || 0) };
+      }),
+
+    clearSymbol: publicProcedure
+      .input(z.object({ symbol: z.string() }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error('Database not available');
+        await db.delete(historicalCandleCache).where(eq(historicalCandleCache.symbol, input.symbol));
+        await db.delete(cacheMetadata).where(eq(cacheMetadata.symbol, input.symbol));
+        return { success: true };
+      }),
+
+    clearIntradayCache: publicProcedure.mutation(async () => {
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+      const intradayTfs = ['15m', '30m', '1h', '2h', '3h', '4h'];
+      for (const tf of intradayTfs) {
+        await db.delete(historicalCandleCache).where(eq(historicalCandleCache.timeframe, tf));
+      }
+      await db.update(cacheMetadata).set({ status: 'pending', errorMessage: null });
+      return { success: true, message: `已清空分时缓存（${intradayTfs.join(', ')}），将重新缓存` };
+    }),
+
+    clearAll: publicProcedure.mutation(async () => {
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+      await db.delete(historicalCandleCache);
+      await db.delete(cacheMetadata);
+      return { success: true, message: '已清空全部 K 线缓存' };
+    }),
+  }),
+
+  // ============ 数据源健康监控 ============
+  health: router({
+    getSourceHealth: publicProcedure.query(async () => {
+      const db = await getDb();
+      if (!db) return [];
+      const rows = await db.select().from(dataSourceHealth)
+        .orderBy(dataSourceHealth.source, dataSourceHealth.timeframe);
+      return rows.map((r) => ({
+        ...r,
+        successRate: r.success + r.failure > 0
+          ? Math.round((r.success / (r.success + r.failure)) * 100)
+          : null,
+        totalRequests: r.success + r.failure,
+      }));
+    }),
+
+    resetStats: publicProcedure.mutation(async () => {
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+      await db.delete(dataSourceHealth);
+      return { success: true };
+    }),
   }),
 });
 
