@@ -476,7 +476,16 @@ async function backtestSymbol(
 /**
  * 执行回测
  */
-export async function runBacktest(config: BacktestConfig): Promise<void> {
+export interface BacktestResult {
+  trades: InsertBacktestTrade[];
+  equityCurve: Array<{ date: string; value: number }>;
+  totalTrades: number;
+  winTrades: number;
+  lossTrades: number;
+  totalFees: number;
+}
+
+export async function runBacktest(config: BacktestConfig): Promise<BacktestResult> {
   if (runningTasks.get(config.sessionId)) {
     console.log(`[Backtest] Session ${config.sessionId} already running`);
     return;
@@ -652,6 +661,15 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
     }).where(eq(backtestSessions.id, config.sessionId));
 
     console.log(`[Backtest] Session ${config.sessionId} completed. Return: ${totalReturn.toFixed(2)}%, Trades: ${state.totalTrades}`);
+    
+    return {
+      trades: state.trades,
+      equityCurve: state.equityCurve,
+      totalTrades: state.totalTrades,
+      winTrades: state.winTrades,
+      lossTrades: state.lossTrades,
+      totalFees: state.totalFees,
+    };
   } catch (err: any) {
     console.error(`[Backtest] Session ${config.sessionId} failed:`, err);
     await db.update(backtestSessions).set({
@@ -663,6 +681,16 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
     // 清空缓存以释放内存
     candleCache.clear();
   }
+  
+  // 返回空结果作为备用
+  return {
+    trades: [],
+    equityCurve: [],
+    totalTrades: 0,
+    winTrades: 0,
+    lossTrades: 0,
+    totalFees: 0,
+  };
 }
 
 export function isBacktestRunning(sessionId: number): boolean {

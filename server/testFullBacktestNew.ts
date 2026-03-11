@@ -4,11 +4,11 @@ async function test() {
   console.log("🔄 运行完整回测测试...\n");
   
   const config = {
-    name: "TSLA 测试回测",
+    sessionId: 1,
     initialBalance: 100000,
     startDate: "2025-12-01",
     endDate: "2026-03-07",
-    marketCapFilter: "none" as const,
+    marketCapFilter: "all" as const,
     ladderTimeframe: "30m" as const,
     cdScoreThreshold: 30,
     customStocks: ["TSLA"],
@@ -26,8 +26,10 @@ async function test() {
     
     if (result.trades.length > 0) {
       console.log("\n📈 前 5 笔交易：");
-      result.trades.slice(0, 5).forEach((trade, i) => {
-        console.log(`${i + 1}. ${trade.type.toUpperCase()} ${trade.symbol} @ ${trade.price.toFixed(2)} (${new Date(trade.timestamp).toISOString().split('T')[0]})`);
+      result.trades.slice(0, 5).forEach((trade: any, i: number) => {
+        const price = typeof trade.price === 'string' ? parseFloat(trade.price) : trade.price;
+        const date = trade.tradeDate || new Date().toISOString().split('T')[0];
+        console.log(`${i + 1}. ${trade.type.toUpperCase()} ${trade.symbol} @ ${price.toFixed(2)} (${date})`);
       });
     }
     
