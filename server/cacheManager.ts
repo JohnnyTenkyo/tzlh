@@ -4,7 +4,8 @@ import { fetchHistoricalCandles } from "./marketData";
 import { eq, and, gte, lte } from "drizzle-orm";
 
 export interface Candle {
-  date: string;
+  time: number; // ms timestamp
+  date?: string; // optional for backward compatibility
   open: number;
   high: number;
   low: number;
@@ -184,6 +185,7 @@ export async function cacheStockHistoricalData(symbol: string): Promise<boolean>
         const candles = await fetchHistoricalCandles(symbol, tf as any, startDateStr, endDateStr);
         if (candles && candles.length > 0) {
           const formattedCandles = candles.map((c: any) => ({
+            time: c.time || (c.date ? new Date(c.date).getTime() : 0),
             date: c.date || (c.time ? new Date(c.time).toISOString().split('T')[0] : ''),
             open: typeof c.open === 'string' ? parseFloat(c.open) : c.open,
             high: typeof c.high === 'string' ? parseFloat(c.high) : c.high,

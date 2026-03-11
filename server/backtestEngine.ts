@@ -298,7 +298,7 @@ function calcMaxDrawdown(equityCurve: { date: string; value: number }[]): number
 /**
  * 单只股票回测
  */
-async function backtestSymbol(
+export async function backtestSymbol(
   symbol: string,
   config: BacktestConfig,
   allCandlesByTf: Partial<Record<Timeframe, Candle[]>>,
