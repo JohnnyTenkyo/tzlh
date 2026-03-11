@@ -203,7 +203,7 @@ async function getCandlesForStocks(
   // 整理结果
   for (let i = 0; i < requests.length; i++) {
     const { symbol, tf } = requests[i];
-    const candles = results[i] as Candle[];
+    const candles = results[i];
     
     if (!result.has(symbol)) {
       result.set(symbol, {});
@@ -507,9 +507,6 @@ export async function runBacktest(config: BacktestConfig): Promise<BacktestResul
   }
 
   try {
-    // 初始化进度跟踪器
-    const progressTracker = new ProgressTracker(config.sessionId, 100);
-    
     // 更新状态为运行中
     await db.update(backtestSessions)
       .set({ status: "running", progress: 0 })
@@ -517,8 +514,6 @@ export async function runBacktest(config: BacktestConfig): Promise<BacktestResul
 
     const dates = getDateRange(config.startDate, config.endDate);
     if (dates.length === 0) throw new Error("日期范围无效");
-    
-    progressTracker.step("fetching_data", "准备获取数据");
 
     // 确定要回测的股票列表
     let stocksToTest: string[];

@@ -1,4 +1,5 @@
 import { getDb } from "./db";
+import { backtestSymbol } from "./backtestEngine";
 import { backtestSessions, backtestTrades } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 

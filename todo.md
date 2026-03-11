@@ -346,3 +346,11 @@
 - [ ] 实现智能缓存去重机制
 - [ ] 改进进度反馈粒度（每个数据源完成时更新）
 - [ ] 测试回测功能，验证查询和缓存优化
+
+
+## 第四十七轮集成（缓存去重和进度条优化）
+- [x] 集成 deduplicatedFetch() 到 getCandlesForStocks() 中
+- [x] 集成 ProgressTracker 到 runBacktest() 中
+- [x] 优化前端进度条显示组件（三阶段进度反馈）
+- [x] 修复编译错误（Candle 类型转换、backtestSymbol 导入）
+- [x] 所有 34 个单元测试通过
