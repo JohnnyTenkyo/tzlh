@@ -106,6 +106,17 @@ export const backtestSessions = mysqlTable("backtest_sessions", {
   benchmarkQQQReturn: decimal("benchmarkQQQReturn", { precision: 10, scale: 4 }),
   benchmarkSPYReturn: decimal("benchmarkSPYReturn", { precision: 10, scale: 4 }),
 
+  // Performance metrics
+  avgReturn: decimal("avgReturn", { precision: 10, scale: 4 }), // average return per trade
+  sharpeRatio: decimal("sharpeRatio", { precision: 10, scale: 4 }), // Sharpe ratio
+  maxProfit: decimal("maxProfit", { precision: 16, scale: 2 }), // max single profit
+  maxLoss: decimal("maxLoss", { precision: 16, scale: 2 }), // max single loss
+  avgProfit: decimal("avgProfit", { precision: 10, scale: 4 }), // average profit percentage
+  avgLoss: decimal("avgLoss", { precision: 10, scale: 4 }), // average loss percentage
+  maxConsecutiveWin: int("maxConsecutiveWin").default(0), // max consecutive winning trades
+  maxConsecutiveLoss: int("maxConsecutiveLoss").default(0), // max consecutive losing trades
+  totalFees: decimal("totalFees", { precision: 16, scale: 2 }).default(0), // total trading fees
+
   // Progress
   progress: int("progress").default(0), // 0-100
   currentDate: varchar("currentDate", { length: 10 }), // current simulation date

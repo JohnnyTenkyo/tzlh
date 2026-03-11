@@ -36,6 +36,13 @@
       "when": 1773163419708,
       "tag": "0004_familiar_zombie",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1773213116343,
+      "tag": "0005_round_sabretooth",
+      "breakpoints": true
     }
   ]
 }
