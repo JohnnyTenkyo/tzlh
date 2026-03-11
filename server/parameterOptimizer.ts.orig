@@ -68,27 +68,12 @@ async function runSingleBacktest(
     );
 
     // 计算指标
-    const totalTrades = result.totalTrades || 0;
-    const winningTrades = result.winTrades || 0;
+    const totalTrades = result.trades?.length || 0;
+    const winningTrades = result.trades?.filter((t: any) => t.pnl > 0).length || 0;
     const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
-    const totalReturn = result.equityCurve.length > 0 ? ((result.equityCurve[result.equityCurve.length - 1].value - 100000) / 100000) * 100 : 0;
-    let maxDrawdown = 0, peak = 100000;
-    for (const point of result.equityCurve) { if (point.value > peak) peak = point.value; const dd = ((peak - point.value) / peak) * 100; if (dd > maxDrawdown) maxDrawdown = dd; }
-    const sharpeRatio = totalTrades > 0 ? (totalReturn / Math.sqrt(totalTrades)) : 0;
-      ? ((result.equityCurve[result.equityCurve.length - 1].value - 100000) / 100000) * 100 
-      : 0;
-    
-    // 计算最大回撤
-    let maxDrawdown = 0;
-    let peak = 100000;
-    for (const point of result.equityCurve) {
-      if (point.value > peak) peak = point.value;
-      const dd = ((peak - point.value) / peak) * 100;
-      if (dd > maxDrawdown) maxDrawdown = dd;
-    }
-    
-    // 估算夏普比率
-    const sharpeRatio = totalTrades > 0 ? (totalReturn / Math.sqrt(totalTrades)) : 0;
+    const totalReturn = result.totalReturn || 0;
+    const maxDrawdown = result.maxDrawdown || 0;
+    const sharpeRatio = result.sharpeRatio || 0;
 
     const optimizationResult: OptimizationResult = {
       ladderLevel,
