@@ -505,8 +505,8 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
     };
 
     // 所有需要的时间级别（添加所有用于 CD 分数计算的级别）
+    // 注意：移除 5m，因为系统没有实现对 5m 的支持
     const allTf = Array.from(new Set([
-      "5m" as Timeframe,
       "15m" as Timeframe,
       "30m" as Timeframe,
       "1h" as Timeframe,

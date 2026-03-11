@@ -1,0 +1,58 @@
+--- a/server/backtestEngine.ts
++++ b/server/backtestEngine.ts
+@@ -159,24 +159,24 @@ async function getCandlesWithCache(
+ /**
+  * 并发获取多只股票的多个时间级别数据
+  */
+ async function getCandlesForStocks(
+   symbols: string[],
+   timeframes: Timeframe[],
+   startDate: string,
+   endDate: string
+ ): Promise<Map<string, Partial<Record<Timeframe, Candle[]>>>> {
+   const result = new Map<string, Partial<Record<Timeframe, Candle[]>>>();
+   
+-  // 构建所有需要的请求
+-  const requests: Array<{
+-    symbol: string;
+-    tf: Timeframe;
+-    promise: Promise<Candle[]>;
+-  }> = [];
++  // 构建所有需要的任务（不提前创建Promise）
++  const tasks: Array<() => Promise<{ symbol: string; tf: Timeframe; candles: Candle[] }>> = [];
+   
+   for (const symbol of symbols) {
+     for (const tf of timeframes) {
+-      requests.push({
++      tasks.push(async () => ({
+         symbol,
+         tf,
+-        promise: getCandlesWithCache(symbol, tf, startDate, endDate),
+-      });
++        candles: await getCandlesWithCache(symbol, tf, startDate, endDate),
++      }));
+     }
+   }
+   
+-  // 使用并发控制执行请求
+-  const results = await executeWithConcurrency(
+-    requests.map(r => () => r.promise),
++  // 使用真正的并发控制执行任务
++  const taskResults = await executeWithConcurrency(tasks, MAX_CONCURRENT_REQUESTS);
++  
++  // 整理结果
++  for (const item of taskResults) {
++    if (!item) continue;
++    const { symbol, tf, candles } = item;
++    
++    if (!result.has(symbol)) {
++      result.set(symbol, {});
++    }
++    
++    if (candles && candles.length > 0) {
++      result.get(symbol)![tf] = candles;
++    }
++  }
++  
++  return result;
+ }
