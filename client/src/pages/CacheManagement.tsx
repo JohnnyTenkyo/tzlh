@@ -96,6 +96,34 @@ export default function CacheManagement() {
     onError: (err) => toast.error('操作失败', { description: err.message }),
   });
 
+  const [warmupProgress, setWarmupProgress] = useState(0);
+  const [isWarming, setIsWarming] = useState(false);
+  const warmupMut = trpc.cache.warmupAllStocks.useMutation({
+    onSuccess: (data) => {
+      setIsWarming(false);
+      setWarmupProgress(0);
+      toast.success('预热完成', { description: data.message });
+      refetchStats(); refetchList();
+    },
+    onError: (err) => {
+      setIsWarming(false);
+      toast.error('预热失败', { description: err.message });
+    },
+  });
+
+  const handleWarmup = async () => {
+    setIsWarming(true);
+    setWarmupProgress(0);
+    try {
+      await warmupMut.mutateAsync({
+        timeframes: ['1d', '1h', '15m'],
+        daysBack: 365,
+      });
+    } catch (e) {
+      console.error('Warmup error:', e);
+    }
+  };
+
   // 聚合健康数据（按数据源分组）
   const healthBySource: Record<string, {
     source: string;
@@ -409,6 +437,48 @@ export default function CacheManagement() {
         {/* ---- 缓存操作 ---- */}
         <TabsContent value="actions" className="mt-4">
           <div className="space-y-4">
+            {/* 预热全部股票 */}
+            <Card className="bg-gradient-to-r from-purple-900/30 to-blue-900/30 border-purple-500/30">
+              <CardHeader>
+                <CardTitle className="text-white text-base flex items-center gap-2">
+                  <RefreshCw className="h-4 w-4 text-purple-400" />
+                  预热全部股票
+                </CardTitle>
+                <CardDescription className="text-gray-400">
+                  一键触发 793 支股票的 Alpaca 日线+分时数据批量缓存（每次 5 个并发）。
+                  预热完成后，后续回测将直接使用缓存数据，大幅加速回测启动。
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isWarming && (
+                  <div className="mb-4 space-y-2">
+                    <div className="flex justify-between text-xs text-gray-400">
+                      <span>预热进度</span>
+                      <span>{Math.round(warmupProgress)}%</span>
+                    </div>
+                    <Progress value={warmupProgress} className="h-2" />
+                  </div>
+                )}
+                <Alert className="bg-purple-500/10 border-purple-500/30 mb-4">
+                  <AlertCircle className="h-4 w-4 text-purple-400" />
+                  <AlertDescription className="text-purple-300 text-sm">
+                    预热时间约 10-20 分钟（取决于网络），期间可继续使用其他功能。
+                  </AlertDescription>
+                </Alert>
+                <Button
+                  onClick={handleWarmup}
+                  disabled={isWarming || warmupMut.isPending}
+                  className="bg-purple-600 hover:bg-purple-700 text-white"
+                >
+                  {isWarming || warmupMut.isPending ? (
+                    <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />预热中...</>
+                  ) : (
+                    <><Database className="h-4 w-4 mr-2" />开始预热</>  
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+
             {/* 清空分时缓存 */}
             <Card className="bg-gray-800/50 border-gray-700">
               <CardHeader>

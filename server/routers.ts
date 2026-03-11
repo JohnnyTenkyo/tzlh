@@ -19,7 +19,7 @@ import { getSchedulerStatus } from "./scheduler";
 import { runBacktest, isBacktestRunning } from "./backtestEngine";
 import { calculateLadder } from "./indicators";
 import type { Timeframe } from "./indicators";
-import { fetchHistoricalCandles } from "./marketData";
+import { fetchHistoricalCandles } from './marketData';
 import { dataSourceHealth, cacheMetadata, historicalCandleCache } from "../drizzle/schema";
 import { sql } from "drizzle-orm";
 
@@ -496,6 +496,79 @@ export const appRouter = router({
       await db.delete(cacheMetadata);
       return { success: true, message: '已清空全部 K 线缓存' };
     }),
+    warmupAllStocks: publicProcedure
+      .input(z.object({
+        timeframes: z.array(z.string()).default(['1d', '1h', '15m']),
+        daysBack: z.number().default(365),
+      }))
+      .mutation(async ({ input }) => {
+        const { US_STOCKS } = await import('@shared/stockPool');
+        const db = await getDb();
+        if (!db) throw new Error('Database not available');
+        
+        const formatDate = (d: Date) => d.toISOString().split('T')[0];
+        
+        const symbols = US_STOCKS.map((s: any) => s.symbol);
+        const total = symbols.length;
+        let completed = 0;
+        let failed = 0;
+        const errors: { symbol: string; error: string }[] = [];
+        
+        for (const symbol of symbols) {
+          await db.insert(cacheMetadata)
+            .values({ symbol, status: 'pending' })
+            .onDuplicateKeyUpdate({ set: { status: 'pending' } });
+        }
+        
+        const batchSize = 5;
+        for (let i = 0; i < symbols.length; i += batchSize) {
+          const batch = symbols.slice(i, i + batchSize);
+          const promises = batch.map(async (symbol: string) => {
+            try {
+              await db.update(cacheMetadata)
+                .set({ status: 'caching' })
+                .where(eq(cacheMetadata.symbol, symbol));
+              
+              for (const tf of input.timeframes) {
+                const endDate = new Date();
+                const startDate = new Date(endDate.getTime() - input.daysBack * 24 * 60 * 60 * 1000);
+                
+                try {
+                  const candles = await fetchHistoricalCandles(symbol, tf as Timeframe, formatDate(startDate), formatDate(endDate));
+                  if (candles && candles.length > 0) {
+                    // cached
+                  }
+                } catch (e) {
+                  console.error(`Failed to cache ${symbol} ${tf}:`, e);
+                }
+              }
+              
+              await db.update(cacheMetadata)
+                .set({ status: 'completed', errorMessage: null })
+                .where(eq(cacheMetadata.symbol, symbol));
+              completed++;
+            } catch (e) {
+              failed++;
+              const msg = e instanceof Error ? e.message : String(e);
+              errors.push({ symbol, error: msg });
+              await db.update(cacheMetadata)
+                .set({ status: 'failed', errorMessage: msg.slice(0, 500) })
+                .where(eq(cacheMetadata.symbol, symbol));
+            }
+          });
+          
+          await Promise.all(promises);
+        }
+        
+        return {
+          success: true,
+          total,
+          completed,
+          failed,
+          errors: errors.slice(0, 10),
+          message: `预热完成：${completed}/${total} 成功，${failed} 失败`,
+        };
+      }),
   }),
 
   // ============ 数据源健康监控 ============

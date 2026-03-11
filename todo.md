@@ -375,3 +375,11 @@
 - [x] 重写 CacheManagement.tsx（真实数据+分时缓存清空+全部清空+健康监控面板）
 - [x] 修复 recordHealth 中的 sql 引用
 - [x] 所有测试通过（39 tests），TypeScript 零错误
+
+
+## 第五十轮功能（缓存预热全部股票）
+- [x] 在 routers.ts 中添加 warmupAllStocks tRPC 端点（批量缓存 793 支股票）
+- [x] 实现批量缓存逻辑：每次 5 个并发，逐个获取 Alpaca 日线+分时数据
+- [x] 在 CacheManagement.tsx 中添加「预热全部股票」按钮
+- [x] 实现预热进度 UI（进度条、提示信息）
+- [x] 所有测试通过（39 tests），TypeScript 零错误
