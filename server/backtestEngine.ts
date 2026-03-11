@@ -171,44 +171,45 @@ async function getCandlesForStocks(
 ): Promise<Map<string, Partial<Record<Timeframe, Candle[]>>>> {
   const result = new Map<string, Partial<Record<Timeframe, Candle[]>>>();
   
-  // 构建所有需要的请求
-  const requests: Array<{
+  // 构建惰性任务工厂函数数组（关键：不提前创建 Promise，而是传入工厂函数）
+  const tasks: Array<{
     symbol: string;
     tf: Timeframe;
-    promise: Promise<Candle[]>;
+    run: () => Promise<Candle[]>;
   }> = [];
-  
+
   for (const symbol of symbols) {
     for (const tf of timeframes) {
-      requests.push({
+      tasks.push({
         symbol,
         tf,
-        promise: deduplicatedFetch(
-          symbol,
-          tf,
-          startDate,
-          endDate,
-          () => getCandlesWithCache(symbol, tf, startDate, endDate)
-        ),
+        run: () =>
+          deduplicatedFetch(
+            symbol,
+            tf,
+            startDate,
+            endDate,
+            () => getCandlesWithCache(symbol, tf, startDate, endDate)
+          ),
       });
     }
   }
-  
-  // 使用并发控制执行请求
+
+  // 传入工厂函数数组，并发控制器才会按需调用 run()
   const results = await executeWithConcurrency(
-    requests.map(r => () => r.promise),
+    tasks.map((t) => t.run),
     MAX_CONCURRENT_REQUESTS
   );
-  
+
   // 整理结果
-  for (let i = 0; i < requests.length; i++) {
-    const { symbol, tf } = requests[i];
-    const candles = results[i] as Candle[];
-    
+  for (let i = 0; i < tasks.length; i++) {
+    const { symbol, tf } = tasks[i];
+    const candles = results[i] as Candle[] | undefined;
+
     if (!result.has(symbol)) {
       result.set(symbol, {});
     }
-    
+
     if (candles && candles.length > 0) {
       result.get(symbol)![tf] = candles;
     }
@@ -463,10 +464,12 @@ export async function backtestSymbol(
 
         state.balance -= totalBuyAmount;
         state.totalFees += fees.totalFee;
+        // 成本价包含买入手续费，避免单笔 P&L 偏高
+        const effectiveAvgCost = totalBuyAmount / buyQty;
         state.positions.set(symbol, {
           symbol,
           quantity: buyQty,
-          avgCost: closePrice,
+          avgCost: effectiveAvgCost,
           entryTimeframe: buySig.timeframe,
           entryType: "first_buy",
           firstBuyDone: true,

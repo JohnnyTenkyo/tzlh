@@ -1,0 +1,1 @@
+ALTER TABLE `backtest_sessions` MODIFY COLUMN `totalFees` decimal(16,2) DEFAULT '0';

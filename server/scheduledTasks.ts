@@ -15,7 +15,8 @@ async function getRecommendedStocks(): Promise<string[]> {
 
   try {
     const recommendations = await db.select().from(stockRecommendations);
-    return [...new Set(recommendations.map((r: any) => r.symbol))];
+    const symbols = recommendations.map((r: any) => r.symbol);
+    return Array.from(new Set(symbols));
   } catch (error) {
     console.error("[ScheduledTasks] Error fetching recommended stocks:", error);
     return [];

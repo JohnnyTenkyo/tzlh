@@ -207,10 +207,10 @@ export default function Home() {
   const scanDate = data?.scanDate || "";
   const fromCache = data?.fromCache || false;
 
-  // 按大中小盘分类
-  const largeCapResults = results.filter(r => r.marketCap === "500b" || r.marketCap === "100b");
-  const midCapResults = results.filter(r => r.marketCap === "50b" || r.marketCap === "10b");
-  const smallCapResults = results.filter(r => r.marketCap === "1b" || r.marketCap === "none");
+  // 按得分数分组（AggressiveScore 中没有 marketCap 字段，按分数高中低分组）
+  const highScoreResults = results.filter(r => r.totalScore >= 3);
+  const midScoreResults = results.filter(r => r.totalScore === 2);
+  const lowScoreResults = results.filter(r => r.totalScore === 1);
 
   return (
     <Layout>
@@ -325,46 +325,46 @@ export default function Home() {
               </div>
             </div>
 
-            {/* 大盘股 */}
-            {largeCapResults.length > 0 && (
+            {/* 高分股票 (分数 >= 3) */}
+            {highScoreResults.length > 0 && (
               <div>
                 <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-primary"></span>
-                  大盘股 ({largeCapResults.length})
+                  强信号 ({highScoreResults.length})
                 </h3>
                 <div className="space-y-2">
-                  {largeCapResults.map((item, idx) => (
+                  {highScoreResults.map((item, idx) => (
                     <RecommendationCard key={item.symbol} item={item} rank={idx + 1} />
                   ))}
                 </div>
               </div>
             )}
 
-            {/* 中盘股 */}
-            {midCapResults.length > 0 && (
+            {/* 中分股票 (分数 = 2) */}
+            {midScoreResults.length > 0 && (
               <div>
                 <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-yellow-400"></span>
-                  中盘股 ({midCapResults.length})
+                  中信号 ({midScoreResults.length})
                 </h3>
                 <div className="space-y-2">
-                  {midCapResults.map((item, idx) => (
-                    <RecommendationCard key={item.symbol} item={item} rank={largeCapResults.length + idx + 1} />
+                  {midScoreResults.map((item, idx) => (
+                    <RecommendationCard key={item.symbol} item={item} rank={highScoreResults.length + idx + 1} />
                   ))}
                 </div>
               </div>
             )}
 
-            {/* 小盘股 */}
-            {smallCapResults.length > 0 && (
+            {/* 弱信号股票 (分数 = 1) */}
+            {lowScoreResults.length > 0 && (
               <div>
                 <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-green-400"></span>
-                  小盘股 ({smallCapResults.length})
+                  弱信号 ({lowScoreResults.length})
                 </h3>
                 <div className="space-y-2">
-                  {smallCapResults.map((item, idx) => (
-                    <RecommendationCard key={item.symbol} item={item} rank={largeCapResults.length + midCapResults.length + idx + 1} />
+                  {lowScoreResults.map((item, idx) => (
+                    <RecommendationCard key={item.symbol} item={item} rank={highScoreResults.length + midScoreResults.length + idx + 1} />
                   ))}
                 </div>
               </div>

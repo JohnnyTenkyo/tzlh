@@ -1,4 +1,4 @@
-import { useLocation, useParams } from "wouter";
+import { useParams, useLocation } from "wouter";
 import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { useLocalAuth } from "@/contexts/AuthContext";
@@ -50,12 +50,10 @@ function KLineTab({
   startDate: string;
   endDate: string;
 }) {
-  // 获取回测中涉及的所有股票
   const symbols = Array.from(new Set(trades.map((t) => t.symbol)));
   const [selectedSymbol, setSelectedSymbol] = useState<string>(symbols[0] || "");
   const [selectedTf, setSelectedTf] = useState<string>("1d");
 
-  // 查询 chart 数据
   const { data: chartData } = trpc.chart.getCandles.useQuery(
     { symbol: selectedSymbol, timeframe: selectedTf, startDate, endDate },
     { enabled: !!selectedSymbol }
@@ -70,8 +68,6 @@ function KLineTab({
       </Card>
     );
   }
-
-  // markers 已移至 StockChart 的内部处理
 
   return (
     <Card className="bg-card border-border">
@@ -133,7 +129,6 @@ const SIGNAL_TYPE_LABELS: Record<string, string> = {
   second_sell: "第二卖点（蓝梯上边缘<黄梯下边缘）",
   daily_sell_half: "日线CD卖出信号（卖 50%）",
   daily_sell_all: "日线CD卖出后次日清仓",
-  // 激进策略信号
   aggressive_first_buy: "激进第一买点（收盘站上蓝梯）",
   aggressive_add_position: "激进加仓（蓝梯突破黄梯）",
   aggressive_retest_add: "激进加仓（蓝梯回撞黄梯+CD信号）",
@@ -153,12 +148,52 @@ export default function BacktestDetail() {
       enabled: !!user && !!sessionId,
       refetchInterval: (query) => {
         const d = query.state.data;
-        if (d && 'session' in d && d.session?.status === "running") return 5000;
+        if (d && "session" in d && (d as any).session?.status === "running") return 5000;
         return false;
       },
     }
   );
 
+  // ===== 所有 Hook 必须在 early return 之前声明 =====
+  const session = data?.success ? data.session : null;
+  const trades = data?.success ? (data as any).trades ?? [] : [];
+
+  const [showBenchmarks, setShowBenchmarks] = useState({ QQQ: false, SPY: false });
+  const [benchmarkData, setBenchmarkData] = useState<Record<string, any[]>>({});
+  const [exportLoading, setExportLoading] = useState(false);
+
+  const exportMutation = trpc.backtest.exportData.useMutation();
+  const utils = trpc.useUtils();
+
+  useEffect(() => {
+    if (!session) return;
+    if (!showBenchmarks.QQQ && !showBenchmarks.SPY) return;
+
+    const fetchBenchmarks = async () => {
+      const symbols = Object.keys(showBenchmarks).filter(
+        (k) => showBenchmarks[k as keyof typeof showBenchmarks]
+      );
+      for (const symbol of symbols) {
+        try {
+          const result = await utils.chart.getBenchmarkReturns.fetch({
+            symbol: symbol as "QQQ" | "SPY",
+            startDate: session.startDate,
+            endDate: session.endDate,
+          });
+          if (result.success) {
+            setBenchmarkData((prev) => ({ ...prev, [symbol]: result.data }));
+          }
+        } catch (err) {
+          console.error("Failed to fetch benchmark data:", err);
+        }
+      }
+    };
+
+    fetchBenchmarks();
+  }, [session?.startDate, session?.endDate, showBenchmarks]);
+  // ===== Hook 声明结束 =====
+
+  // Early returns（必须在所有 Hook 之后）
   if (!user) {
     return (
       <Layout>
@@ -183,54 +218,27 @@ export default function BacktestDetail() {
     );
   }
 
-  if (!data?.success || !data.session) {
+  if (!data?.success || !session) {
     return (
       <Layout>
         <div className="container py-20 text-center">
           <AlertCircle size={40} className="text-muted-foreground mx-auto mb-4" />
-          <p className="text-muted-foreground">{data?.error || "存档不存在"}</p>
+          <p className="text-muted-foreground">{(data as any)?.error || "存档不存在"}</p>
           <Button className="mt-4" onClick={() => navigate("/backtest")}>返回列表</Button>
         </div>
       </Layout>
     );
   }
 
-  const { session, trades, isRunning } = data;
   const totalReturn = session.totalReturn ? parseFloat(String(session.totalReturn)) : null;
   const maxDrawdown = session.maxDrawdown ? parseFloat(String(session.maxDrawdown)) : null;
   const isProfit = totalReturn !== null && totalReturn > 0;
+  const initialBalance = parseFloat(String(session.initialBalance));
 
   // 解析权益曲线
   const equityCurve: { date: string; value: number }[] = session.equityCurve
     ? JSON.parse(String(session.equityCurve))
     : [];
-
-  const [showBenchmarks, setShowBenchmarks] = useState({ QQQ: false, SPY: false });
-  const [benchmarkData, setBenchmarkData] = useState<Record<string, any[]>>({});
-
-  // 获取基准数据
-  useEffect(() => {
-    const fetchBenchmarks = async () => {
-      if (showBenchmarks.QQQ || showBenchmarks.SPY) {
-        const symbols = Object.keys(showBenchmarks).filter(k => showBenchmarks[k as keyof typeof showBenchmarks]);
-        for (const symbol of symbols) {
-          try {
-            const result = await trpc.chart.getBenchmarkReturns.query({
-              symbol: symbol as 'QQQ' | 'SPY',
-              startDate: session.startDate,
-              endDate: session.endDate,
-            });
-            if (result.success) {
-              setBenchmarkData(prev => ({ ...prev, [symbol]: result.data }));
-            }
-          } catch (err) {
-            console.error('Failed to fetch benchmark data:', err);
-          }
-        }
-      }
-    };
-    fetchBenchmarks();
-  }, [showBenchmarks, session.startDate, session.endDate]);
 
   // 解析回测条件
   const cdTimeframes: string[] = session.cdSignalTimeframes
@@ -241,53 +249,51 @@ export default function BacktestDetail() {
     : [];
 
   // 计算胜率
-  const winRate = session.totalTrades && (session.totalTrades > 0)
+  const winRate = session.totalTrades && session.totalTrades > 0
     ? ((session.winTrades || 0) / session.totalTrades * 100).toFixed(1)
     : null;
 
-  // 图表数据
+  // 图表数据（合并基准数据）
   const chartData = equityCurve.map(p => {
     const point: any = {
       date: p.date,
       value: p.value,
       label: `${p.value.toLocaleString()}`,
     };
-    
-    // 添加基准数据
-    for (const [symbol, data] of Object.entries(benchmarkData)) {
-      const benchPoint = data.find(d => d.date === p.date);
+    for (const [symbol, bData] of Object.entries(benchmarkData)) {
+      const benchPoint = (bData as any[]).find((d: any) => d.date === p.date);
       if (benchPoint) {
         point[symbol] = benchPoint.return;
       }
     }
-    
     return point;
   });
 
-  const initialBalance = parseFloat(String(session.initialBalance));
-  // 导出回测数据为 Excel
+  // 导出 Excel
   const handleExportExcel = async () => {
     try {
-      const result = await trpc.backtest.exportData.mutate({ sessionId: session.id });
-      if (result.success) {
-        // 将 base64 转换为 Blob 并下载
+      setExportLoading(true);
+      const result = await exportMutation.mutateAsync({ sessionId: session.id });
+      if (result.success && result.data) {
         const binaryString = atob(result.data);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i);
         }
-        const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
         const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
+        const link = document.createElement("a");
         link.href = url;
-        link.download = result.filename;
+        link.download = result.filename || "backtest-export.xlsx";
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         window.URL.revokeObjectURL(url);
       }
     } catch (err) {
-      console.error('导出失败:', err);
+      console.error("导出失败:", err);
+    } finally {
+      setExportLoading(false);
     }
   };
 
@@ -304,20 +310,9 @@ export default function BacktestDetail() {
           >
             <ArrowLeft size={14} /> 返回
           </Button>
-            <div className="flex-1">
-        
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleExportExcel}
-            disabled={session.status !== "completed"}
-            className="gap-1.5"
-          >
-            <DollarSign size={14} /> 导出 Excel
-          </Button>
+          <div className="flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-bold text-foreground">{session.name}</h1>
-              {/* 策略类型徽章 */}
               {(session as any).strategy === "aggressive" ? (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-orange-500/15 text-orange-400 border border-orange-500/25">
                   ⚡ 激进策略
@@ -343,6 +338,15 @@ export default function BacktestDetail() {
               {session.startDate} → {session.endDate}
             </p>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportExcel}
+            disabled={session.status !== "completed" || exportLoading}
+            className="gap-1.5"
+          >
+            <DollarSign size={14} /> {exportLoading ? "导出中..." : "导出 Excel"}
+          </Button>
         </div>
 
         {/* Progress Bar (running) */}
@@ -440,22 +444,22 @@ export default function BacktestDetail() {
                 <CardTitle className="text-sm font-medium">资产净值曲线</CardTitle>
               </CardHeader>
               <CardContent>
-              <div className="flex gap-2 mb-4">
-                <Button
-                  variant={showBenchmarks.QQQ ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setShowBenchmarks(p => ({ ...p, QQQ: !p.QQQ }))}
-                >
-                  {showBenchmarks.QQQ ? "隐藏" : "显示"} QQQ 基准
-                </Button>
-                <Button
-                  variant={showBenchmarks.SPY ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setShowBenchmarks(p => ({ ...p, SPY: !p.SPY }))}
-                >
-                  {showBenchmarks.SPY ? "隐藏" : "显示"} SPY 基准
-                </Button>
-              </div>
+                <div className="flex gap-2 mb-4">
+                  <Button
+                    variant={showBenchmarks.QQQ ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setShowBenchmarks(p => ({ ...p, QQQ: !p.QQQ }))}
+                  >
+                    {showBenchmarks.QQQ ? "隐藏" : "显示"} QQQ 基准
+                  </Button>
+                  <Button
+                    variant={showBenchmarks.SPY ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setShowBenchmarks(p => ({ ...p, SPY: !p.SPY }))}
+                  >
+                    {showBenchmarks.SPY ? "隐藏" : "显示"} SPY 基准
+                  </Button>
+                </div>
                 {chartData.length > 0 ? (
                   <ResponsiveContainer width="100%" height={300}>
                     <LineChart data={chartData}>
@@ -463,7 +467,7 @@ export default function BacktestDetail() {
                       <XAxis
                         dataKey="date"
                         tick={{ fontSize: 10, fill: "oklch(0.60 0.02 240)" }}
-                        tickFormatter={v => v.slice(5)} // MM-DD
+                        tickFormatter={v => v.slice(5)}
                         interval="preserveStartEnd"
                       />
                       <YAxis
@@ -493,7 +497,6 @@ export default function BacktestDetail() {
                         dot={false}
                         activeDot={{ r: 4 }}
                       />
-                    
                       {showBenchmarks.QQQ && (
                         <Line
                           type="monotone"
@@ -514,7 +517,7 @@ export default function BacktestDetail() {
                           name="SPY"
                         />
                       )}
-                      </LineChart>
+                    </LineChart>
                   </ResponsiveContainer>
                 ) : (
                   <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
@@ -577,7 +580,7 @@ export default function BacktestDetail() {
                   </div>
                 ) : (
                   <div className="space-y-2 max-h-[500px] overflow-y-auto">
-                    {trades.map((trade, idx) => {
+                    {trades.map((trade: any, idx: number) => {
                       const isBuy = trade.type === "buy";
                       const pnl = trade.pnl ? parseFloat(String(trade.pnl)) : null;
                       return (
@@ -652,22 +655,22 @@ export default function BacktestDetail() {
                       ${parseFloat(String(session.initialBalance)).toLocaleString()}
                     </p>
                   </div>
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">市値筛选</p>
-                  <p className="text-foreground font-medium">
-                    {MARKET_CAP_LABELS[session.marketCapFilter as keyof typeof MARKET_CAP_LABELS] || session.marketCapFilter}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">回测策略</p>
-                  <p className="text-foreground font-medium">
-                    {(session as any).strategy === "aggressive" ? (
-                      <span className="text-orange-400">⚡ 激进策略（CD信号后收盘站上蓝梯即买入）</span>
-                    ) : (
-                      <span className="text-blue-400">📊 标准策略（蓝梯突破黄梯后买入）</span>
-                    )}
-                  </p>
-                </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">市值筛选</p>
+                    <p className="text-foreground font-medium">
+                      {MARKET_CAP_LABELS[session.marketCapFilter as keyof typeof MARKET_CAP_LABELS] || session.marketCapFilter}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">回测策略</p>
+                    <p className="text-foreground font-medium">
+                      {(session as any).strategy === "aggressive" ? (
+                        <span className="text-orange-400">⚡ 激进策略（CD信号后收盘站上蓝梯即买入）</span>
+                      ) : (
+                        <span className="text-blue-400">📊 标准策略（蓝梯突破黄梯后买入）</span>
+                      )}
+                    </p>
+                  </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">回测区间</p>
                     <p className="text-foreground font-medium">{session.startDate} → {session.endDate}</p>
@@ -677,7 +680,6 @@ export default function BacktestDetail() {
                     <p className="text-foreground font-medium">过去 {session.cdLookbackBars} 根K线</p>
                   </div>
                 </div>
-                {/* 激进策略持仓说明 */}
                 {(session as any).strategy === "aggressive" && (
                   <div className="p-3 rounded-lg bg-orange-500/5 border border-orange-500/20">
                     <p className="text-xs font-medium text-orange-400 mb-2">⚡ 激进策略持仓说明</p>
@@ -737,7 +739,6 @@ export default function BacktestDetail() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-6">
-                  {/* Trade Statistics */}
                   <div>
                     <h3 className="text-sm font-medium text-foreground mb-3">交易统计</h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -758,12 +759,11 @@ export default function BacktestDetail() {
                       <MetricCard
                         label="胜率"
                         value={winRate ? `${winRate}%` : "--"}
-                        positive={winRate && parseFloat(winRate) > 50}
+                        positive={winRate ? parseFloat(winRate) > 50 : undefined}
                       />
                     </div>
                   </div>
 
-                  {/* Performance Metrics */}
                   <div>
                     <h3 className="text-sm font-medium text-foreground mb-3">性能指标</h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -787,7 +787,6 @@ export default function BacktestDetail() {
                     </div>
                   </div>
 
-                  {/* Risk Metrics */}
                   <div>
                     <h3 className="text-sm font-medium text-foreground mb-3">风险指标</h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -812,24 +811,23 @@ export default function BacktestDetail() {
                     </div>
                   </div>
 
-                  {/* Strategy Performance */}
                   <div className="p-3 rounded-lg bg-primary/5 border border-primary/20">
                     <p className="text-xs font-medium text-primary mb-2">📊 策略总体评价</p>
                     <div className="space-y-1 text-xs text-foreground">
                       {winRate && parseFloat(winRate) > 50 ? (
                         <p className="text-green-400">✓ 胜率良好（{winRate}%），策略具有正期望值</p>
                       ) : (
-                        <p className="text-yellow-400">⚠ 胜率偏低（{winRate}%），需要优化策略参数</p>
+                        <p className="text-yellow-400">⚠ 胜率偏低（{winRate || "--"}%），需要优化策略参数</p>
                       )}
                       {totalReturn !== null && totalReturn > 0 ? (
                         <p className="text-green-400">✓ 总收益为正（{totalReturn.toFixed(2)}%），策略有效</p>
                       ) : (
-                        <p className="text-red-400">✗ 总收益为负（{totalReturn?.toFixed(2)}%），需要改进</p>
+                        <p className="text-red-400">✗ 总收益为负（{totalReturn?.toFixed(2) || "--"}%），需要改进</p>
                       )}
                       {maxDrawdown !== null && Math.abs(maxDrawdown) < 20 ? (
                         <p className="text-green-400">✓ 最大回撤可控（{maxDrawdown.toFixed(2)}%），风险管理良好</p>
                       ) : (
-                        <p className="text-orange-400">⚠ 最大回撤较大（{maxDrawdown?.toFixed(2)}%），需要加强风险控制</p>
+                        <p className="text-orange-400">⚠ 最大回撤较大（{maxDrawdown?.toFixed(2) || "--"}%），需要加强风险控制</p>
                       )}
                     </div>
                   </div>

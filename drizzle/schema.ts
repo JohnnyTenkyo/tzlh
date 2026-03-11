@@ -115,7 +115,7 @@ export const backtestSessions = mysqlTable("backtest_sessions", {
   avgLoss: decimal("avgLoss", { precision: 10, scale: 4 }), // average loss percentage
   maxConsecutiveWin: int("maxConsecutiveWin").default(0), // max consecutive winning trades
   maxConsecutiveLoss: int("maxConsecutiveLoss").default(0), // max consecutive losing trades
-  totalFees: decimal("totalFees", { precision: 16, scale: 2 }).default(0), // total trading fees
+  totalFees: decimal("totalFees", { precision: 16, scale: 2 }).default("0"), // total trading fees
 
   // Progress
   progress: int("progress").default(0), // 0-100

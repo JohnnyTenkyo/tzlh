@@ -49,6 +49,7 @@ export async function getCandlesFromCache(
     if (candles.length === 0) return null;
 
     return candles.map((c) => ({
+      time: new Date(c.date).getTime(), // convert date string to ms timestamp
       date: c.date,
       open: Number(c.open),
       high: Number(c.high),
@@ -84,7 +85,7 @@ export async function saveCandlesToCache(
         batch.map((c) => ({
           symbol,
           timeframe,
-          date: c.date,
+          date: c.date ?? new Date(c.time).toISOString().split('T')[0],
           open: c.open.toString(),
           high: c.high.toString(),
           low: c.low.toString(),

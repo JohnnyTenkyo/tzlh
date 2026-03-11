@@ -354,3 +354,13 @@
 - [x] 优化前端进度条显示组件（三阶段进度反馈）
 - [x] 修复编译错误（Candle 类型转换、backtestSymbol 导入）
 - [x] 所有 34 个单元测试通过
+
+## 第四十八轮修复（三大核心问题修复 + K线数据完整化）
+- [x] 修复 BacktestDetail.tsx 中的 React Hook 顺序错误（所有 Hook 移到 early return 之前）
+- [x] 修复 backtestEngine.ts 中的假并发控制（getCandlesForStocks 改为惰性工厂函数）
+- [x] 修复手续费买入成本价偏差（avgCost = totalBuyAmount / buyQty，含手续费）
+- [x] 修复 marketData.ts 中的 Tiingo 分时数据端点（从 /tiingo/daily/ 改为 /iex/<ticker>/prices）
+- [x] 添加 Stooq 作为日线/周线免费主数据源（无 API Key、历史完整 20+ 年）
+- [x] 修复 TypeScript 编译错误（全部 0 错误）
+- [x] 新增 Stooq 数据解析和手续费成本价的单元测试
+- [x] 所有 38 个单元测试通过

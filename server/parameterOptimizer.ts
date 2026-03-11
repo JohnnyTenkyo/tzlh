@@ -55,29 +55,25 @@ async function runSingleBacktest(
 ): Promise<OptimizationResult> {
   try {
     // 运行回测
-    const result = await runBacktest(
-      symbol,
-      {
-        startDate: startDate.toISOString().split('T')[0],
-        endDate: endDate.toISOString().split('T')[0],
-        ladderLevel: parseInt(ladderLevel),
-        cdScoreThreshold,
-        strategy,
-      },
-      false // 不启用调试模式
-    );
+    const result = await runBacktest({
+      sessionId: 0, // 优化时不需要真实 sessionId
+      initialBalance: 100000,
+      startDate: startDate.toISOString().split('T')[0],
+      endDate: endDate.toISOString().split('T')[0],
+      marketCapFilter: "none" as any,
+      ladderTimeframe: ladderLevel as any,
+      cdScoreThreshold,
+      customStocks: [symbol],
+    });
 
     // 计算指标
     const totalTrades = result.totalTrades || 0;
     const winningTrades = result.winTrades || 0;
     const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
-    const totalReturn = result.equityCurve.length > 0 ? ((result.equityCurve[result.equityCurve.length - 1].value - 100000) / 100000) * 100 : 0;
-    let maxDrawdown = 0, peak = 100000;
-    for (const point of result.equityCurve) { if (point.value > peak) peak = point.value; const dd = ((peak - point.value) / peak) * 100; if (dd > maxDrawdown) maxDrawdown = dd; }
-    const sharpeRatio = totalTrades > 0 ? (totalReturn / Math.sqrt(totalTrades)) : 0;
-      ? ((result.equityCurve[result.equityCurve.length - 1].value - 100000) / 100000) * 100 
+    const totalReturn = result.equityCurve.length > 0
+      ? ((result.equityCurve[result.equityCurve.length - 1].value - 100000) / 100000) * 100
       : 0;
-    
+
     // 计算最大回撤
     let maxDrawdown = 0;
     let peak = 100000;
@@ -86,7 +82,7 @@ async function runSingleBacktest(
       const dd = ((peak - point.value) / peak) * 100;
       if (dd > maxDrawdown) maxDrawdown = dd;
     }
-    
+
     // 估算夏普比率
     const sharpeRatio = totalTrades > 0 ? (totalReturn / Math.sqrt(totalTrades)) : 0;
 
