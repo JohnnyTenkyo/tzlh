@@ -274,12 +274,21 @@ async function fetchYahooCandles(symbol: string, timeframe: Timeframe, startDate
  * 获取K线数据（多源策略：Finnhub > Tiingo > Alpha Vantage > Yahoo）
  */
 export async function fetchCandles(symbol: string, timeframe: Timeframe, startDate?: string, endDate?: string): Promise<Candle[]> {
-  const sources = [
-    { name: "Finnhub", fn: fetchFinnhubCandles },
-    { name: "Tiingo", fn: fetchTiingoCandles },
-    { name: "Alpha Vantage", fn: fetchAlphaVantageCandles },
-    { name: "Yahoo Finance", fn: fetchYahooCandles },
-  ];
+  // 对于 15m/30m，优先使用 Tiingo（支持 2 年历史）而不是 Finnhub（只有 60 天）
+  // 对于其他时间框架，按默认顺序尝试
+  const sources = (timeframe === "15m" || timeframe === "30m")
+    ? [
+        { name: "Tiingo", fn: fetchTiingoCandles },
+        { name: "Alpha Vantage", fn: fetchAlphaVantageCandles },
+        { name: "Finnhub", fn: fetchFinnhubCandles },
+        { name: "Yahoo Finance", fn: fetchYahooCandles },
+      ]
+    : [
+        { name: "Finnhub", fn: fetchFinnhubCandles },
+        { name: "Tiingo", fn: fetchTiingoCandles },
+        { name: "Alpha Vantage", fn: fetchAlphaVantageCandles },
+        { name: "Yahoo Finance", fn: fetchYahooCandles },
+      ];
 
   for (const source of sources) {
     try {

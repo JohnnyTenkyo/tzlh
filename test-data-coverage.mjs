@@ -1,99 +1,83 @@
-import axios from 'axios';
+import Database from 'better-sqlite3';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const symbols = ['AAPL', 'TSLA', 'MSFT'];
-const timeframes = ['1d', '1h', '30m', '15m'];
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const dbPath = path.join(__dirname, 'data.db');
 
-async function testFinnhub() {
-  console.log('\n=== Testing Finnhub Data Coverage ===');
-  const apiKey = process.env.FINNHUB_API_KEY;
+const db = new Database(dbPath);
+
+const symbol = 'AAPL';
+const startDate = '2025-12-01';
+const endDate = '2026-03-07';
+
+console.log(`\n=== 检查 ${symbol} 的数据覆盖范围 ===`);
+console.log(`时间范围: ${startDate} 到 ${endDate}`);
+
+try {
+  // 检查日线数据
+  console.log('\n1. 检查数据库中的日线数据...');
+  const dailyData = db.prepare(`
+    SELECT COUNT(*) as count, MIN(date) as earliest, MAX(date) as latest
+    FROM candle_cache
+    WHERE symbol = ? AND timeframe = '1d' AND date >= ? AND date <= ?
+  `).get(symbol, startDate, endDate);
   
-  for (const tf of timeframes) {
-    const resMap = { '15m': '15', '30m': '30', '1h': '60', '1d': 'D' };
-    const daysMap = { '15m': 60, '30m': 60, '1h': 730, '1d': 3650 };
-    
-    const resolution = resMap[tf];
-    const days = daysMap[tf];
-    const now = Math.floor(Date.now() / 1000);
-    const from = now - days * 86400;
-    
-    try {
-      const res = await axios.get('https://finnhub.io/api/v1/stock/candle', {
-        params: { symbol: 'AAPL', resolution, from, to: now, token: apiKey },
-        timeout: 5000
-      });
-      
-      if (res.data.s === 'ok' && res.data.t) {
-        const firstTime = new Date(res.data.t[0] * 1000).toISOString().split('T')[0];
-        const lastTime = new Date(res.data.t[res.data.t.length - 1] * 1000).toISOString().split('T')[0];
-        console.log(`${tf}: ${res.data.t.length} candles | ${firstTime} to ${lastTime}`);
-      }
-    } catch (err) {
-      console.log(`${tf}: Error - ${err.message}`);
+  console.log(`   日线数据: ${dailyData.count} 根`);
+  if (dailyData.count > 0) {
+    console.log(`   - 最早: ${dailyData.earliest}`);
+    console.log(`   - 最新: ${dailyData.latest}`);
+  }
+
+  // 检查 30m 数据
+  console.log('\n2. 检查数据库中的 30m 数据...');
+  const data30m = db.prepare(`
+    SELECT COUNT(*) as count, MIN(date) as earliest, MAX(date) as latest
+    FROM candle_cache
+    WHERE symbol = ? AND timeframe = '30m' AND date >= ? AND date <= ?
+  `).get(symbol, startDate, endDate);
+  
+  console.log(`   30m 数据: ${data30m.count} 根`);
+  if (data30m.count > 0) {
+    console.log(`   - 最早: ${data30m.earliest}`);
+    console.log(`   - 最新: ${data30m.latest}`);
+  }
+
+  // 检查所有时间框架的数据覆盖
+  console.log('\n3. 检查所有时间框架的数据覆盖...');
+  const allTimeframes = db.prepare(`
+    SELECT DISTINCT timeframe, COUNT(*) as count, MIN(date) as earliest, MAX(date) as latest
+    FROM candle_cache
+    WHERE symbol = ? AND date >= ? AND date <= ?
+    GROUP BY timeframe
+    ORDER BY timeframe
+  `).all(symbol, startDate, endDate);
+  
+  for (const tf of allTimeframes) {
+    console.log(`   ${tf.timeframe}: ${tf.count} 根 (${tf.earliest} ~ ${tf.latest})`);
+  }
+
+  // 检查 2025-12-01 之前的数据
+  console.log('\n4. 检查 2025-12-01 之前的数据...');
+  const beforeDec = db.prepare(`
+    SELECT DISTINCT timeframe, COUNT(*) as count, MAX(date) as latest
+    FROM candle_cache
+    WHERE symbol = ? AND date < '2025-12-01'
+    GROUP BY timeframe
+    ORDER BY timeframe
+  `).all(symbol);
+  
+  if (beforeDec.length === 0) {
+    console.log('   ❌ 没有 2025-12-01 之前的数据！');
+  } else {
+    for (const tf of beforeDec) {
+      console.log(`   ${tf.timeframe}: ${tf.count} 根 (最新: ${tf.latest})`);
     }
   }
+
+} catch (err) {
+  console.error('错误:', err.message);
 }
 
-async function testTiingo() {
-  console.log('\n=== Testing Tiingo Data Coverage ===');
-  const apiKey = process.env.TIINGO_API_KEY;
-  
-  for (const tf of ['1d', '1h', '30m', '15m']) {
-    const resMap = { '15m': '15min', '30m': '30min', '1h': '1hour', '1d': 'daily' };
-    const resolution = resMap[tf];
-    
-    const now = new Date();
-    const startDate = new Date(now.getTime() - 730 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const endDate = now.toISOString().split('T')[0];
-    
-    try {
-      const res = await axios.get(`https://api.tiingo.com/tiingo/daily/AAPL/prices`, {
-        params: { startDate, endDate, resampleFreq: resolution, token: apiKey },
-        timeout: 5000
-      });
-      
-      if (Array.isArray(res.data) && res.data.length > 0) {
-        const firstTime = res.data[0].date;
-        const lastTime = res.data[res.data.length - 1].date;
-        console.log(`${tf}: ${res.data.length} candles | ${firstTime} to ${lastTime}`);
-      }
-    } catch (err) {
-      console.log(`${tf}: Error - ${err.message}`);
-    }
-  }
-}
-
-async function testAlphaVantage() {
-  console.log('\n=== Testing Alpha Vantage Data Coverage ===');
-  const apiKey = process.env.ALPHAVANTAGE_API_KEY;
-  
-  for (const tf of ['1d', '1h', '30m', '15m']) {
-    const funcMap = { '15m': 'TIME_SERIES_INTRADAY', '30m': 'TIME_SERIES_INTRADAY', '1h': 'TIME_SERIES_INTRADAY', '1d': 'TIME_SERIES_DAILY' };
-    const intervalMap = { '15m': '15min', '30m': '30min', '1h': '60min', '1d': '' };
-    
-    const func = funcMap[tf];
-    const interval = intervalMap[tf];
-    
-    try {
-      const params = { symbol: 'AAPL', apikey: apiKey, outputsize: 'full', function: func };
-      if (interval) params.interval = interval;
-      
-      const res = await axios.get('https://www.alphavantage.co/query', {
-        params,
-        timeout: 5000
-      });
-      
-      const timeSeriesKey = Object.keys(res.data).find(k => k.startsWith('Time Series'));
-      if (timeSeriesKey && res.data[timeSeriesKey]) {
-        const ts = res.data[timeSeriesKey];
-        const times = Object.keys(ts).sort();
-        console.log(`${tf}: ${times.length} candles | ${times[0]} to ${times[times.length - 1]}`);
-      }
-    } catch (err) {
-      console.log(`${tf}: Error - ${err.message}`);
-    }
-  }
-}
-
-await testFinnhub();
-await testTiingo();
-await testAlphaVantage();
+db.close();
+process.exit(0);
