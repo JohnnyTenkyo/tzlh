@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useLocation, useParams } from "wouter";
+import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { useLocalAuth } from "@/contexts/AuthContext";
 import Layout from "@/components/Layout";
@@ -205,6 +206,33 @@ export default function BacktestDetail() {
     ? JSON.parse(String(session.equityCurve))
     : [];
 
+  const [showBenchmarks, setShowBenchmarks] = useState({ QQQ: false, SPY: false });
+  const [benchmarkData, setBenchmarkData] = useState<Record<string, any[]>>({});
+
+  // 获取基准数据
+  useEffect(() => {
+    const fetchBenchmarks = async () => {
+      if (showBenchmarks.QQQ || showBenchmarks.SPY) {
+        const symbols = Object.keys(showBenchmarks).filter(k => showBenchmarks[k as keyof typeof showBenchmarks]);
+        for (const symbol of symbols) {
+          try {
+            const result = await trpc.chart.getBenchmarkReturns.query({
+              symbol: symbol as 'QQQ' | 'SPY',
+              startDate: session.startDate,
+              endDate: session.endDate,
+            });
+            if (result.success) {
+              setBenchmarkData(prev => ({ ...prev, [symbol]: result.data }));
+            }
+          } catch (err) {
+            console.error('Failed to fetch benchmark data:', err);
+          }
+        }
+      }
+    };
+    fetchBenchmarks();
+  }, [showBenchmarks, session.startDate, session.endDate]);
+
   // 解析回测条件
   const cdTimeframes: string[] = session.cdSignalTimeframes
     ? JSON.parse(String(session.cdSignalTimeframes))
@@ -219,11 +247,23 @@ export default function BacktestDetail() {
     : null;
 
   // 图表数据
-  const chartData = equityCurve.map(p => ({
-    date: p.date,
-    value: p.value,
-    label: `$${p.value.toLocaleString()}`,
-  }));
+  const chartData = equityCurve.map(p => {
+    const point: any = {
+      date: p.date,
+      value: p.value,
+      label: `${p.value.toLocaleString()}`,
+    };
+    
+    // 添加基准数据
+    for (const [symbol, data] of Object.entries(benchmarkData)) {
+      const benchPoint = data.find(d => d.date === p.date);
+      if (benchPoint) {
+        point[symbol] = benchPoint.return;
+      }
+    }
+    
+    return point;
+  });
 
   const initialBalance = parseFloat(String(session.initialBalance));
 
@@ -366,6 +406,22 @@ export default function BacktestDetail() {
                 <CardTitle className="text-sm font-medium">资产净值曲线</CardTitle>
               </CardHeader>
               <CardContent>
+              <div className="flex gap-2 mb-4">
+                <Button
+                  variant={showBenchmarks.QQQ ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setShowBenchmarks(p => ({ ...p, QQQ: !p.QQQ }))}
+                >
+                  {showBenchmarks.QQQ ? "隐藏" : "显示"} QQQ 基准
+                </Button>
+                <Button
+                  variant={showBenchmarks.SPY ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setShowBenchmarks(p => ({ ...p, SPY: !p.SPY }))}
+                >
+                  {showBenchmarks.SPY ? "隐藏" : "显示"} SPY 基准
+                </Button>
+              </div>
                 {chartData.length > 0 ? (
                   <ResponsiveContainer width="100%" height={300}>
                     <LineChart data={chartData}>
@@ -403,7 +459,28 @@ export default function BacktestDetail() {
                         dot={false}
                         activeDot={{ r: 4 }}
                       />
-                    </LineChart>
+                    
+                      {showBenchmarks.QQQ && (
+                        <Line
+                          type="monotone"
+                          dataKey="QQQ"
+                          stroke="oklch(0.65 0.18 280)"
+                          strokeWidth={2}
+                          dot={false}
+                          name="QQQ"
+                        />
+                      )}
+                      {showBenchmarks.SPY && (
+                        <Line
+                          type="monotone"
+                          dataKey="SPY"
+                          stroke="oklch(0.65 0.18 300)"
+                          strokeWidth={2}
+                          dot={false}
+                          name="SPY"
+                        />
+                      )}
+                      </LineChart>
                   </ResponsiveContainer>
                 ) : (
                   <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">

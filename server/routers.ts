@@ -2,7 +2,7 @@ import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, router } from "./_core/trpc";
+import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
 import {
   localUsers,
@@ -318,6 +318,42 @@ export const appRouter = router({
 
         return { success: true, sessions };
       }),
+    // 导出回测数据为 Excel
+    exportData: protectedProcedure
+      .input(z.object({ sessionId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const localUser = getLocalUser(ctx);
+        if (!localUser) return { success: false, error: "未登录" };
+
+        const db = await getDb();
+        if (!db) return { success: false, error: "数据库不可用" };
+
+        const session = await db.select().from(backtestSessions)
+          .where(and(
+            eq(backtestSessions.id, input.sessionId),
+            eq(backtestSessions.localUserId, localUser.userId)
+          ))
+          .limit(1);
+
+        if (!session || session.length === 0) {
+          return { success: false, error: "回测不存在" };
+        }
+
+        const trades = await db.select().from(backtestTrades)
+          .where(eq(backtestTrades.sessionId, input.sessionId));
+
+        const { generateExcel } = await import('./excelExport');
+        const buffer = generateExcel({
+          session: session[0],
+          trades,
+        });
+
+        return {
+          success: true,
+          data: buffer.toString('base64'),
+          filename: `backtest-${input.sessionId}-${new Date().toISOString().split('T')[0]}.xlsx`,
+        };
+      }),
   }),
 
   // ============ K线图数据 ============
@@ -370,6 +406,18 @@ export const appRouter = router({
           advancedChanData: [],
           advancedChanSignals: [],
         };
+      }),
+    // 获取基准指数收益率
+    getBenchmarkReturns: publicProcedure
+      .input(z.object({
+        symbol: z.enum(['QQQ', 'SPY']),
+        startDate: z.string(),
+        endDate: z.string(),
+      }))
+      .query(async ({ input }) => {
+        const { getBenchmarkReturns } = await import('./benchmarkData');
+        const data = await getBenchmarkReturns(input.symbol, input.startDate, input.endDate);
+        return { success: true, data };
       }),
   }),
 });

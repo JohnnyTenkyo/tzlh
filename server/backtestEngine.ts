@@ -363,7 +363,11 @@ async function backtestSymbol(
         if (sellQty > 0 && position.quantity > 0) {
           const actualQty = Math.min(sellQty, position.quantity);
           const amount = actualQty * closePrice;
-          const pnl = amount - actualQty * position.avgCost;
+          
+          // 计算卖出手续费
+          const sellFees = calculateTradeFees(actualQty, closePrice);
+          const netAmount = amount - sellFees.totalFee;
+          const pnl = netAmount - actualQty * position.avgCost;
 
           state.trades.push({
             sessionId: config.sessionId,
@@ -380,7 +384,8 @@ async function backtestSymbol(
             pnlPercent: String(((pnl / (actualQty * position.avgCost)) * 100).toFixed(4)),
           });
 
-          state.balance += amount;
+          state.balance += netAmount;
+          state.totalFees += sellFees.totalFee;
           position.quantity -= actualQty;
 
           // 新的卖出逻辑不需要 dailySellTriggered
@@ -425,6 +430,13 @@ async function backtestSymbol(
       if (buySig) {
         const buyAmount = state.balance * 0.5;
         const buyQty = buyAmount / closePrice;
+        
+        // 计算手续费
+        const fees = calculateTradeFees(buyQty, closePrice);
+        const totalBuyAmount = buyAmount + fees.totalFee;
+        
+        // 检查是否有足够资金
+        if (totalBuyAmount > state.balance) continue;
 
         state.trades.push({
           sessionId: config.sessionId,
@@ -441,7 +453,8 @@ async function backtestSymbol(
           pnlPercent: "0",
         });
 
-        state.balance -= buyAmount;
+        state.balance -= totalBuyAmount;
+        state.totalFees += fees.totalFee;
         state.positions.set(symbol, {
           symbol,
           quantity: buyQty,
@@ -633,6 +646,7 @@ export async function runBacktest(config: BacktestConfig): Promise<void> {
       lossTrades: state.lossTrades,
       benchmarkQQQReturn: qqqReturn !== null ? String(qqqReturn.toFixed(4)) : null,
       benchmarkSPYReturn: spyReturn !== null ? String(spyReturn.toFixed(4)) : null,
+      totalFees: String(state.totalFees.toFixed(2)),
       equityCurve: JSON.stringify(state.equityCurve),
       completedAt: new Date(),
     }).where(eq(backtestSessions.id, config.sessionId));
