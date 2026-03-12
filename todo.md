@@ -426,3 +426,8 @@
 - [x] K线图添加CD指标显示（chart.getCandles计算DXDX/DBJGXC + showCDLabels=true）
 - [x] 修复统计分析数据错误（maxProfit/maxLoss使用美元金额，avgReturn/avgLoss使用百分比）
 - [x] 修复backtestEngine中数据持久化到DB缓存的逻辑
+
+## 第五十五轮修复
+- [x] 修复回测卡在0%的问题（增强错误处理 + 服务器启动清理卡住的session + 立即设置progress=1）
+- [x] 添加 cleanupStuckSessions 启动清理函数（服务器重启时自动重置卡住的回测任务）
+- [x] routers.ts 中 backtest.start 添加外层 try/catch，将崩溃错误写入 DB

@@ -1,0 +1,55 @@
+{
+  "query": "SELECT id, name, status, progress, currentDate, errorMessage, createdAt FROM backtest_sessions ORDER BY id DESC LIMIT 5;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2HCC4smJtrSzVE7.4a5605c2899a --database RYDVHRQSwvsKmDK7d9JHib --execute SELECT id, name, status, progress, currentDate, errorMessage, createdAt FROM backtest_sessions ORDER BY id DESC LIMIT 5;",
+  "rows": [
+    {
+      "id": "480002",
+      "name": "d",
+      "status": "running",
+      "progress": "0",
+      "currentDate": "NULL",
+      "errorMessage": "NULL",
+      "createdAt": "2026-03-12 05:26:22"
+    },
+    {
+      "id": "420001",
+      "name": "1",
+      "status": "completed",
+      "progress": "100",
+      "currentDate": "2026-03-07",
+      "errorMessage": "NULL",
+      "createdAt": "2026-03-11 16:39:54"
+    },
+    {
+      "id": "360003",
+      "name": "q",
+      "status": "completed",
+      "progress": "100",
+      "currentDate": "2025-04-24",
+      "errorMessage": "NULL",
+      "createdAt": "2026-03-11 06:53:55"
+    },
+    {
+      "id": "90002",
+      "name": "历史数据测试 - TSLA 2024.03-04",
+      "status": "completed",
+      "progress": "100",
+      "currentDate": "2024-02-29",
+      "errorMessage": "NULL",
+      "createdAt": "2026-03-07 04:06:28"
+    },
+    {
+      "id": "1",
+      "name": "2023年4321策略回测",
+      "status": "completed",
+      "progress": "100",
+      "currentDate": "2023-07-24",
+      "errorMessage": "NULL",
+      "createdAt": "2026-03-06 09:42:59"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tstatus\tprogress\tcurrentDate\terrorMessage\tcreatedAt\n480002\td\trunning\t0\tNULL\tNULL\t2026-03-12 05:26:22\n420001\t1\tcompleted\t100\t2026-03-07\tNULL\t2026-03-11 16:39:54\n360003\tq\tcompleted\t100\t2025-04-24\tNULL\t2026-03-11 06:53:55\n90002\t历史数据测试 - TSLA 2024.03-04\tcompleted\t100\t2024-02-29\tNULL\t2026-03-07 04:06:28\n1\t2023年4321策略回测\tcompleted\t100\t2023-07-24\tNULL\t2026-03-06 09:42:59\n",
+  "stderr": "",
+  "execution_time_ms": 1701
+}

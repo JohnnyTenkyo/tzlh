@@ -129,12 +129,12 @@ async function getCandlesWithCache(
   }
   
   // 2. Check database cache (priority) - 按日期范围查询
+  // 注意：DB 缓存返回的是日期窗口内的数据，不存入内存缓存以避免将部分数据当作全量
   try {
     const dbCachedCandles = await getCandlesFromCache(symbol, tf, startDate, endDate);
     if (dbCachedCandles && dbCachedCandles.length > 0) {
       console.log(`[Cache] DB hit for ${symbol}/${tf}: ${dbCachedCandles.length} candles`);
-      // 存入内存缓存（全量）
-      candleCache.set(cacheKey, dbCachedCandles);
+      // 不存入内存缓存，因为这只是部分日期范围的数据
       return dbCachedCandles;
     }
   } catch (err) {
@@ -568,8 +568,11 @@ export async function runBacktest(config: BacktestConfig): Promise<BacktestResul
   }
 
   runningTasks.set(config.sessionId, true);
+  console.log(`[Backtest] runBacktest() entered for session ${config.sessionId}`);
+  
   const db = await getDb();
   if (!db) {
+    console.error(`[Backtest] DB is null for session ${config.sessionId}`);
     runningTasks.delete(config.sessionId);
     return { trades: [], equityCurve: [], totalTrades: 0, winTrades: 0, lossTrades: 0, totalFees: 0 };
   }
@@ -577,9 +580,12 @@ export async function runBacktest(config: BacktestConfig): Promise<BacktestResul
   try {
     const progressTracker = new ProgressTracker(config.sessionId, 100);
     
+    // 立即设置 progress=1 避免永远停在 0%
     await db.update(backtestSessions)
-      .set({ status: "running", progress: 0 })
+      .set({ status: "running", progress: 1, currentDate: "初始化中..." })
       .where(eq(backtestSessions.id, config.sessionId));
+    
+    console.log(`[Backtest] Session ${config.sessionId} status set to running (progress=1)`);
 
     const dates = getDateRange(config.startDate, config.endDate);
     if (dates.length === 0) throw new Error("日期范围无效");
@@ -816,4 +822,26 @@ export async function runBacktest(config: BacktestConfig): Promise<BacktestResul
 
 export function isBacktestRunning(sessionId: number): boolean {
   return runningTasks.get(sessionId) === true;
+}
+
+/**
+ * 服务器启动时清理卡住的回测任务
+ * 将所有 status='running' 但不在 runningTasks 中的 session 重置为 'failed'
+ */
+export async function cleanupStuckSessions(): Promise<void> {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    
+    const result = await db.update(backtestSessions)
+      .set({ 
+        status: "failed", 
+        errorMessage: "服务器重启，回测任务中断" 
+      })
+      .where(eq(backtestSessions.status, "running" as any));
+    
+    console.log(`[Backtest] Cleaned up stuck sessions on startup`);
+  } catch (err) {
+    console.warn(`[Backtest] Failed to cleanup stuck sessions:`, err);
+  }
 }

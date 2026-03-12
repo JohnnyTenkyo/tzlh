@@ -8,6 +8,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { startScheduler } from "../scheduler";
+import { cleanupStuckSessions } from "../backtestEngine";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -62,6 +63,8 @@ async function startServer() {
     console.log(`Server running on http://localhost:${port}/`);
     // 启动定时扫描调度器
     startScheduler();
+    // 清理卡住的回测任务
+    cleanupStuckSessions().catch(err => console.warn('[Startup] cleanupStuckSessions error:', err));
   });
 }
 

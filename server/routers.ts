@@ -234,20 +234,36 @@ export const appRouter = router({
 
         const sessionId = (result[0] as any).insertId;
 
-        // 异步启动回测
-        setTimeout(() => {
-          runBacktest({
-            sessionId,
-            initialBalance: input.initialBalance,
-            startDate: input.startDate,
-            endDate: input.endDate,
-            marketCapFilter: input.marketCapFilter as any,
-            ladderTimeframe: input.ladderTimeframe as Timeframe,
-            cdScoreThreshold: input.cdScoreThreshold,
-            customStocks: cleanCustomStocks || undefined,
-            debug: input.debug || false,
-            debugSymbol: input.debugSymbol || undefined,
-          }).catch(err => console.error("[Backtest] Error:", err));
+        // 异步启动回测（增强错误处理）
+        setTimeout(async () => {
+          try {
+            console.log(`[Backtest] Launching runBacktest for session ${sessionId}...`);
+            await runBacktest({
+              sessionId,
+              initialBalance: input.initialBalance,
+              startDate: input.startDate,
+              endDate: input.endDate,
+              marketCapFilter: input.marketCapFilter as any,
+              ladderTimeframe: input.ladderTimeframe as Timeframe,
+              cdScoreThreshold: input.cdScoreThreshold,
+              customStocks: cleanCustomStocks || undefined,
+              debug: input.debug || false,
+              debugSymbol: input.debugSymbol || undefined,
+            });
+          } catch (err: any) {
+            console.error(`[Backtest] Fatal error in session ${sessionId}:`, err);
+            try {
+              const errDb = await getDb();
+              if (errDb) {
+                await errDb.update(backtestSessions).set({
+                  status: "failed",
+                  errorMessage: err?.message || "回测启动失败",
+                }).where(eq(backtestSessions.id, sessionId));
+              }
+            } catch (dbErr) {
+              console.error(`[Backtest] Failed to update session ${sessionId} status:`, dbErr);
+            }
+          }
         }, 100);
 
         return { success: true, sessionId };
