@@ -4,6 +4,13 @@ import { Candle, TimeInterval, CDSignal, BuySellPressure, MomentumSignal, ChanLu
 import { calculateMACD, calculateLadder } from '@/lib/indicators';
 import { toFutuTime } from '@/lib/stockApi';
 
+export interface TradeMarker {
+  time: number; // ms timestamp
+  type: 'buy' | 'sell';
+  price: number;
+  label: string;
+}
+
 interface StockChartProps {
   candles: Candle[];
   interval: TimeInterval;
@@ -20,6 +27,7 @@ interface StockChartProps {
   biPoints?: BiPoint[];
   zhongshus?: ZhongShu[];
   chanBuySellSignals?: AdvancedChanSignal[];
+  tradeMarkers?: TradeMarker[];
   height?: number;
   costPrice?: number;
 }
@@ -46,6 +54,7 @@ export default function StockChart({
   showLadder = true,
   showCDLabels = true,
   biPoints, zhongshus, chanBuySellSignals,
+  tradeMarkers,
   height = 400, costPrice,
 }: StockChartProps) {
   const mainChartRef = useRef<HTMLDivElement>(null);
@@ -254,6 +263,7 @@ export default function StockChart({
     chanBSSignals: AdvancedChanSignal[] | undefined,
     showCDL: boolean,
     iv: TimeInterval,
+    tradeMks?: TradeMarker[],
   ) => {
     const allMarkers: Array<{time: Time; position: 'belowBar' | 'aboveBar'; color: string; shape: 'arrowUp' | 'arrowDown' | 'circle' | 'square'; text: string}> = [];
     
@@ -315,6 +325,19 @@ export default function StockChart({
       }
     }
     
+    // Trade markers from backtest (buy/sell points)
+    if (tradeMks && tradeMks.length > 0) {
+      for (const tm of tradeMks) {
+        allMarkers.push({
+          time: toChartTime(tm.time, iv),
+          position: tm.type === 'buy' ? 'belowBar' : 'aboveBar',
+          color: tm.type === 'buy' ? '#22c55e' : '#ef4444',
+          shape: tm.type === 'buy' ? 'arrowUp' : 'arrowDown',
+          text: tm.label,
+        });
+      }
+    }
+
     allMarkers.sort((a, b) => (a.time as number) - (b.time as number));
     return allMarkers;
   }, []);
@@ -490,7 +513,7 @@ export default function StockChart({
       mainSeriesRef.current.candle!.setData(candleData);
 
       // Update markers
-      const allMarkers = buildMainMarkers(cdSignals, chanLunSignals, showChanLun, advancedChanSignals, showAdvancedChan, chanBuySellSignals, showCDLabels, interval);
+      const allMarkers = buildMainMarkers(cdSignals, chanLunSignals, showChanLun, advancedChanSignals, showAdvancedChan, chanBuySellSignals, showCDLabels, interval, tradeMarkers);
       mainSeriesRef.current.candle!.setMarkers(allMarkers);
 
       // Handle ladder toggle
@@ -581,7 +604,7 @@ export default function StockChart({
       prevCandleCountRef.current = candles.length;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candles, cdSignals, chanLunSignals, showChanLun, advancedChanData, advancedChanSignals, showAdvancedChan, showLadder, showCDLabels, costPrice, biPoints, zhongshus, chanBuySellSignals]);
+  }, [candles, cdSignals, chanLunSignals, showChanLun, advancedChanData, advancedChanSignals, showAdvancedChan, showLadder, showCDLabels, costPrice, biPoints, zhongshus, chanBuySellSignals, tradeMarkers]);
 
   // ===== FULL REBUILD (only on interval change or initial render) =====
   useEffect(() => {
@@ -647,7 +670,7 @@ export default function StockChart({
     }
 
     // Markers
-    const allMarkers = buildMainMarkers(cdSignals, chanLunSignals, showChanLun, advancedChanSignals, showAdvancedChan, chanBuySellSignals, showCDLabels, interval);
+    const allMarkers = buildMainMarkers(cdSignals, chanLunSignals, showChanLun, advancedChanSignals, showAdvancedChan, chanBuySellSignals, showCDLabels, interval, tradeMarkers);
     if (allMarkers.length > 0) candleSeries.setMarkers(allMarkers);
 
     // Cost price line

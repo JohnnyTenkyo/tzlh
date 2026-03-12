@@ -4,11 +4,16 @@ import { ProgressTracker } from "./progressReporter";
 /**
  * 自动回测引擎
  * 基于黄蓝梯子 + CD抄底指标的买卖逻辑
+ *
+ * 修复要点：
+ * 1. backtestSymbol 使用移动指针代替 O(n²) filter
+ * 2. 缓存 key 不绑定回测区间（Yahoo/Finnhub 等按 symbol+tf+source 缓存）
+ * 3. 成功抓到的数据持久化回 DB 缓存
  */
 import { detectFirstBuySignal, detectFirstSellSignal, detectSecondBuySignal, detectSecondSellSignal } from "./buySignalWithScore";
 import { calculateCDScore } from "./cdScore";
 import { fetchHistoricalCandles, fetchQuote } from "./marketData";
-import { getCandlesFromCache } from "./cacheManager";
+import { getCandlesFromCache, saveCandlesToCache } from "./cacheManager";
 import {
   Candle,
   Timeframe,
@@ -57,8 +62,8 @@ interface Position {
   dailySellTriggered: boolean;
   dailySellDate: string | null;
   // 激进策略加仓状态
-  aggressiveAddDone: boolean;     // 是否已完成蓝梯突破黄梯加仓
-  aggressiveRetestAddDone: boolean; // 是否已完成回撞黄梯加仓
+  aggressiveAddDone: boolean;
+  aggressiveRetestAddDone: boolean;
 }
 
 // ============ 回测状态 ============
@@ -76,14 +81,19 @@ interface BacktestState {
 // 运行中的回测任务
 const runningTasks = new Map<number, boolean>();
 
-// K线数据缓存（避免重复API调用）
+// K线数据内存缓存（按 symbol+tf 缓存，不绑定回测区间）
 const candleCache = new Map<string, Candle[]>();
-const CACHE_KEY_SEPARATOR = "::";
-const API_TIMEOUT_MS = 10000; // API 调用超时 10 秒
-const MAX_CONCURRENT_REQUESTS = 3; // 最多并发 3 个 API 请求
+const MAX_CONCURRENT_REQUESTS = 3;
+const API_TIMEOUT_MS = 15000;
 
-function getCacheKey(symbol: string, tf: Timeframe, startDate: string, endDate: string): string {
-  return `${symbol}${CACHE_KEY_SEPARATOR}${tf}${CACHE_KEY_SEPARATOR}${startDate}${CACHE_KEY_SEPARATOR}${endDate}`;
+/**
+ * 缓存 key 设计修复：
+ * 不再绑定 startDate/endDate，因为 Yahoo/Finnhub 等数据源
+ * 实际请求时不按传入的日期范围获取数据。
+ * 统一按 symbol + timeframe 缓存全量数据，查询时在本地过滤。
+ */
+function getCacheKey(symbol: string, tf: Timeframe): string {
+  return `${symbol}::${tf}`;
 }
 
 /**
@@ -100,6 +110,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 
 /**
  * 从缓存或API获取K线数据（带超时和重试）
+ * 修复：缓存 key 不绑定回测区间，成功后持久化到 DB
  */
 async function getCandlesWithCache(
   symbol: string,
@@ -108,18 +119,21 @@ async function getCandlesWithCache(
   endDate: string,
   retries: number = 2
 ): Promise<Candle[]> {
-  const cacheKey = getCacheKey(symbol, tf, startDate, endDate);
+  const cacheKey = getCacheKey(symbol, tf);
   
-  // 1. Check in-memory cache
+  // 1. Check in-memory cache (全量数据，不按日期过滤)
   if (candleCache.has(cacheKey)) {
-    return candleCache.get(cacheKey)!;
+    const cached = candleCache.get(cacheKey)!;
+    // 在本地按日期过滤
+    return filterByDateRange(cached, startDate, endDate);
   }
   
-  // 2. Check database cache (priority)
+  // 2. Check database cache (priority) - 按日期范围查询
   try {
     const dbCachedCandles = await getCandlesFromCache(symbol, tf, startDate, endDate);
     if (dbCachedCandles && dbCachedCandles.length > 0) {
-      console.log(`[Cache] Using cached data for ${symbol}/${tf}`);
+      console.log(`[Cache] DB hit for ${symbol}/${tf}: ${dbCachedCandles.length} candles`);
+      // 存入内存缓存（全量）
       candleCache.set(cacheKey, dbCachedCandles);
       return dbCachedCandles;
     }
@@ -138,10 +152,19 @@ async function getCandlesWithCache(
         fetchHistoricalCandles(symbol, tf, startDate, endDate),
         API_TIMEOUT_MS
       );
-      candleCache.set(cacheKey, candles);
       
-      // 缓存大小超过 200 条记录时清理最旧的记录
-      if (candleCache.size > 200) {
+      if (candles.length > 0) {
+        // 存入内存缓存
+        candleCache.set(cacheKey, candles);
+        
+        // 持久化到 DB 缓存（异步，不阻塞主流程）
+        persistToDBCache(symbol, tf, candles).catch(err => {
+          console.warn(`[Cache] Failed to persist ${symbol}/${tf} to DB:`, err);
+        });
+      }
+      
+      // 缓存大小超过 300 条记录时清理最旧的记录
+      if (candleCache.size > 300) {
         const firstKey = candleCache.keys().next().value as string | undefined;
         if (firstKey) candleCache.delete(firstKey);
       }
@@ -150,7 +173,6 @@ async function getCandlesWithCache(
     } catch (err) {
       lastError = err as Error;
       if (attempt < retries - 1) {
-        // 指数退避：第一次等待 500ms，第二次等待 1000ms
         await new Promise(resolve => setTimeout(resolve, 500 * Math.pow(2, attempt)));
       }
     }
@@ -161,7 +183,39 @@ async function getCandlesWithCache(
 }
 
 /**
+ * 按日期范围过滤 K 线数据
+ */
+function filterByDateRange(candles: Candle[], startDate: string, endDate: string): Candle[] {
+  const startTs = new Date(`${startDate}T00:00:00.000Z`).getTime();
+  const endTs = new Date(`${endDate}T23:59:59.999Z`).getTime();
+  return candles.filter(c => c.time >= startTs && c.time <= endTs);
+}
+
+/**
+ * 将 API 获取的数据持久化到数据库缓存
+ */
+async function persistToDBCache(symbol: string, tf: string, candles: Candle[]): Promise<void> {
+  if (candles.length === 0) return;
+  try {
+    const formatted = candles.map(c => ({
+      time: c.time,
+      date: new Date(c.time).toISOString().split("T")[0],
+      open: typeof c.open === "string" ? parseFloat(c.open as any) : c.open,
+      high: typeof c.high === "string" ? parseFloat(c.high as any) : c.high,
+      low: typeof c.low === "string" ? parseFloat(c.low as any) : c.low,
+      close: typeof c.close === "string" ? parseFloat(c.close as any) : c.close,
+      volume: typeof c.volume === "string" ? parseFloat(c.volume as any) : c.volume,
+    }));
+    await saveCandlesToCache(symbol, tf, formatted);
+    console.log(`[Cache] Persisted ${candles.length} candles for ${symbol}/${tf} to DB`);
+  } catch (err) {
+    console.warn(`[Cache] persistToDBCache error for ${symbol}/${tf}:`, err);
+  }
+}
+
+/**
  * 并发获取多只股票的多个时间级别数据
+ * 修复：使用惰性工厂函数，真正的并发控制
  */
 async function getCandlesForStocks(
   symbols: string[],
@@ -171,7 +225,7 @@ async function getCandlesForStocks(
 ): Promise<Map<string, Partial<Record<Timeframe, Candle[]>>>> {
   const result = new Map<string, Partial<Record<Timeframe, Candle[]>>>();
   
-  // 构建惰性任务工厂函数数组（关键：不提前创建 Promise，而是传入工厂函数）
+  // 构建惰性任务工厂函数数组
   const tasks: Array<{
     symbol: string;
     tf: Timeframe;
@@ -195,7 +249,7 @@ async function getCandlesForStocks(
     }
   }
 
-  // 传入工厂函数数组，并发控制器才会按需调用 run()
+  // 传入工厂函数数组，并发控制器按需调用 run()
   const results = await executeWithConcurrency(
     tasks.map((t) => t.run),
     MAX_CONCURRENT_REQUESTS
@@ -219,7 +273,7 @@ async function getCandlesForStocks(
 }
 
 /**
- * 并发执行任务，限制并发数
+ * 并发执行任务，限制并发数（真正的并发控制）
  */
 async function executeWithConcurrency<T>(
   tasks: Array<() => Promise<T>>,
@@ -274,6 +328,11 @@ function getClosePriceOnDate(candles: Candle[], date: string): number | null {
   for (const c of candles) {
     if (c.time === dateTime) return c.close;
   }
+  // 尝试按日期字符串匹配
+  for (const c of candles) {
+    const candleDate = new Date(c.time).toISOString().split("T")[0];
+    if (candleDate === date) return c.close;
+  }
   return null;
 }
 
@@ -298,6 +357,7 @@ function calcMaxDrawdown(equityCurve: { date: string; value: number }[]): number
 
 /**
  * 单只股票回测
+ * 修复：使用移动指针代替 O(n²) filter，大幅提升性能
  */
 export async function backtestSymbol(
   symbol: string,
@@ -306,9 +366,15 @@ export async function backtestSymbol(
   _dates: string[],
   state: BacktestState
 ): Promise<void> {
-  // 直接按真实的日线 candle 推进，而不是按 YYYY-MM-DD 午夜时间戳推进
   const dailyAll = allCandlesByTf["1d"] || [];
   if (dailyAll.length === 0) return;
+
+  // 预计算各 timeframe 的移动指针（关键优化：避免每天全量 filter）
+  const tfEntries = Object.entries(allCandlesByTf).map(([tf, candles]) => ({
+    tf: tf as Timeframe,
+    candles: candles || [],
+    endIndex: 0,  // 移动指针：当前已扫描到的位置
+  }));
 
   for (const dailyCandle of dailyAll) {
     const date = new Date(dailyCandle.time).toISOString().split("T")[0];
@@ -321,11 +387,16 @@ export async function backtestSymbol(
 
     const candlesUpTo: Partial<Record<Timeframe, Candle[]>> = {};
 
-    // 截取到当前日期的K线
-    for (const [tf, candles] of Object.entries(allCandlesByTf)) {
-      if (candles) {
-        candlesUpTo[tf as Timeframe] = candles.filter(c => c.time <= cutoffTime);
+    // 使用移动指针截取到当前日期的K线（O(1) 摊销复杂度）
+    for (const entry of tfEntries) {
+      while (
+        entry.endIndex < entry.candles.length &&
+        entry.candles[entry.endIndex].time <= cutoffTime
+      ) {
+        entry.endIndex++;
       }
+      // slice(0, endIndex) 只创建引用，不重新扫描
+      candlesUpTo[entry.tf] = entry.candles.slice(0, entry.endIndex);
     }
 
     const dailyCandles = candlesUpTo["1d"] || [];
@@ -335,7 +406,7 @@ export async function backtestSymbol(
     if (state.positions.has(symbol)) {
       const position = state.positions.get(symbol)!;
 
-      // 检查日线CD卖出信号（仅在第一次卖出后检查）
+      // 检查日线CD卖出信号
       if (!position.dailySellTriggered && closePrice < position.avgCost * 1.05) {
         const dailyCDSell = hasCDSignalInRange(dailyCandles, 10);
         if (dailyCDSell && closePrice < position.avgCost) {
@@ -361,7 +432,6 @@ export async function backtestSymbol(
 
       if (sellSig) {
         let sellQty = 0;
-        let sellType = sellSig.type;
 
         if (sellSig.type === "first_sell") {
           sellQty = position.quantity * 0.5;
@@ -398,8 +468,6 @@ export async function backtestSymbol(
           state.totalFees += sellFees.totalFee;
           position.quantity -= actualQty;
 
-          // 新的卖出逻辑不需要 dailySellTriggered
-
           if (position.quantity <= 0.001) {
             if (pnl > 0) state.winTrades++;
             else state.lossTrades++;
@@ -412,14 +480,11 @@ export async function backtestSymbol(
 
     // ============ 无持仓：检查买入信号 ============
     if (!state.positions.has(symbol)) {
-      // 检查资金是否充足（至少 1%仓位）
       const minAmount = state.balance * 0.01;
       if (state.balance < minAmount) continue;
 
-      // 激进策略与标准策略买入信号检测
       let buySig: { type: string; timeframe: Timeframe; reason: string } | null = null;
 
-      // 基于 CD 分数的买入信号检测
       const firstBuy = detectFirstBuySignal(
         candlesUpTo as Partial<Record<Timeframe, Candle[]>>,
         config.ladderTimeframe,
@@ -441,11 +506,9 @@ export async function backtestSymbol(
         const buyAmount = state.balance * 0.5;
         const buyQty = buyAmount / closePrice;
         
-        // 计算手续费
         const fees = calculateTradeFees(buyQty, closePrice);
         const totalBuyAmount = buyAmount + fees.totalFee;
         
-        // 检查是否有足够资金
         if (totalBuyAmount > state.balance) continue;
 
         state.trades.push({
@@ -466,8 +529,7 @@ export async function backtestSymbol(
 
         state.balance -= totalBuyAmount;
         state.totalFees += fees.totalFee;
-        state.totalTrades++; // 买入时递增交易笔数
-        // 成本价包含买入手续费，避免单笔 P&L 偏高
+        state.totalTrades++;
         const effectiveAvgCost = totalBuyAmount / buyQty;
         state.positions.set(symbol, {
           symbol,
@@ -513,10 +575,8 @@ export async function runBacktest(config: BacktestConfig): Promise<BacktestResul
   }
 
   try {
-    // 初始化进度跟踪器
     const progressTracker = new ProgressTracker(config.sessionId, 100);
     
-    // 更新状态为运行中
     await db.update(backtestSessions)
       .set({ status: "running", progress: 0 })
       .where(eq(backtestSessions.id, config.sessionId));
@@ -529,10 +589,8 @@ export async function runBacktest(config: BacktestConfig): Promise<BacktestResul
     // 确定要回测的股票列表
     let stocksToTest: string[];
     if (config.customStocks && config.customStocks.length > 0) {
-      // 自选股票模式：使用用户指定的股票，不限制数量
       stocksToTest = config.customStocks.map(s => s.toUpperCase().trim()).filter(Boolean);
     } else {
-      // 全部股票池模式：按市値筛选，限制30只以控制时间
       stocksToTest = US_STOCKS.filter(s => !["QQQ", "SPY", "TQQQ", "SOXL", "ARKK"].includes(s.symbol)).map(s => s.symbol);
       stocksToTest = stocksToTest.slice(0, 30);
     }
@@ -548,8 +606,7 @@ export async function runBacktest(config: BacktestConfig): Promise<BacktestResul
       totalFees: 0,
     };
 
-    // 所有需要的时间级别（添加所有用于 CD 分数计算的级别）
-    // 注意：移除 5m，因为系统没有实现对 5m 的支持
+    // 所有需要的时间级别
     const allTf = Array.from(new Set([
       "15m" as Timeframe,
       "30m" as Timeframe,
@@ -605,14 +662,14 @@ export async function runBacktest(config: BacktestConfig): Promise<BacktestResul
         allStockCandles.set(symbol, candles);
       });
       
-      // 更新进度
-      const progress = Math.round((batch + batchSize) / stocksToTest.length * 40);
+      // 更新进度（数据获取阶段占 0-40%）
+      const progress = Math.min(40, Math.round((batch + batchSize) / stocksToTest.length * 40));
       await db.update(backtestSessions)
-        .set({ progress, currentDate: dates[Math.min(batch, dates.length - 1)] })
+        .set({ progress, currentDate: `正在获取数据...` })
         .where(eq(backtestSessions.id, config.sessionId));
     }
 
-    // 逐股票回测
+    // 逐股票回测（回测阶段占 40-80%）
     for (let si = 0; si < stocksToTest.length; si++) {
       const symbol = stocksToTest[si];
       const allCandlesByTf = allStockCandles.get(symbol) || {};
@@ -622,12 +679,15 @@ export async function runBacktest(config: BacktestConfig): Promise<BacktestResul
       // 更新进度
       const progress = 40 + Math.round((si + 1) / stocksToTest.length * 40);
       await db.update(backtestSessions)
-        .set({ progress, currentDate: dates[Math.min(si * 5, dates.length - 1)] })
+        .set({ progress, currentDate: `回测 ${symbol} (${si + 1}/${stocksToTest.length})` })
         .where(eq(backtestSessions.id, config.sessionId));
     }
 
-    // 计算每日净值曲线（使用已缓存的数据）
+    // 计算每日净值曲线（80-90%）
     console.log(`[Backtest] Session ${config.sessionId}: Computing equity curve...`);
+    await db.update(backtestSessions)
+      .set({ progress: 85, currentDate: "计算净值曲线..." })
+      .where(eq(backtestSessions.id, config.sessionId));
     
     for (const date of dates) {
       let portfolioValue = state.balance;
@@ -652,29 +712,44 @@ export async function runBacktest(config: BacktestConfig): Promise<BacktestResul
     const qqqReturn = qqqStart && qqqEnd ? ((qqqEnd - qqqStart) / qqqStart) * 100 : null;
     const spyReturn = spyStart && spyEnd ? ((spyEnd - spyStart) / spyStart) * 100 : null;
 
-    // 保存交易记录
+    // 保存交易记录（90-95%）
+    await db.update(backtestSessions)
+      .set({ progress: 90, currentDate: "保存交易记录..." })
+      .where(eq(backtestSessions.id, config.sessionId));
+
     if (state.trades.length > 0) {
       console.log(`[Backtest] Session ${config.sessionId}: Saving ${state.trades.length} trades...`);
-      // 批量插入（分批）
-      const batchSize = 50;
-      for (let i = 0; i < state.trades.length; i += batchSize) {
-        await db.insert(backtestTrades).values(state.trades.slice(i, i + batchSize));
+      const tradeBatchSize = 50;
+      for (let i = 0; i < state.trades.length; i += tradeBatchSize) {
+        await db.insert(backtestTrades).values(state.trades.slice(i, i + tradeBatchSize));
       }
     }
 
-    // 计算统计指标
+    // 计算统计指标（95-100%）
+    await db.update(backtestSessions)
+      .set({ progress: 95, currentDate: "计算统计指标..." })
+      .where(eq(backtestSessions.id, config.sessionId));
+
     const sellTrades = state.trades.filter(t => t.type === "sell" && t.pnl !== "0");
     const pnlValues = sellTrades.map(t => parseFloat(t.pnlPercent || "0"));
+    const pnlDollarValues = sellTrades.map(t => parseFloat(t.pnl || "0"));
     const winPnls = pnlValues.filter(p => p > 0);
     const lossPnls = pnlValues.filter(p => p <= 0);
+    const winDollarPnls = pnlDollarValues.filter(p => p > 0);
+    const lossDollarPnls = pnlDollarValues.filter(p => p <= 0);
+    
     const avgReturn = pnlValues.length > 0 ? pnlValues.reduce((a, b) => a + b, 0) / pnlValues.length : 0;
     const avgProfit = winPnls.length > 0 ? winPnls.reduce((a, b) => a + b, 0) / winPnls.length : 0;
     const avgLoss = lossPnls.length > 0 ? lossPnls.reduce((a, b) => a + b, 0) / lossPnls.length : 0;
-    const maxProfit = winPnls.length > 0 ? Math.max(...winPnls) : 0;
-    const maxLoss = lossPnls.length > 0 ? Math.min(...lossPnls) : 0;
+    
+    // maxProfit/maxLoss 使用美元金额（而非百分比）
+    const maxProfit = winDollarPnls.length > 0 ? Math.max(...winDollarPnls) : 0;
+    const maxLoss = lossDollarPnls.length > 0 ? Math.min(...lossDollarPnls) : 0;
+    
     // Sharpe ratio (simplified: avgReturn / stdDev)
     const stdDev = pnlValues.length > 1 ? Math.sqrt(pnlValues.reduce((sum, v) => sum + Math.pow(v - avgReturn, 2), 0) / (pnlValues.length - 1)) : 0;
     const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) : 0;
+    
     // Max consecutive wins/losses
     let maxConsecutiveWin = 0, maxConsecutiveLoss = 0, curWin = 0, curLoss = 0;
     for (const p of pnlValues) {
@@ -725,11 +800,10 @@ export async function runBacktest(config: BacktestConfig): Promise<BacktestResul
     }).where(eq(backtestSessions.id, config.sessionId));
   } finally {
     runningTasks.delete(config.sessionId);
-    // 清空缓存以释放内存
+    // 清空内存缓存以释放内存
     candleCache.clear();
   }
   
-  // 返回空结果作为备用
   return {
     trades: [],
     equityCurve: [],

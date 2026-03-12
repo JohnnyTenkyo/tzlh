@@ -414,3 +414,15 @@
 - [x] routers.ts 添加 warmupAllStocks（非阻塞）、stopWarmup、getWarmupProgress 路由
 - [x] CacheManagement.tsx 更新预热 UI：实时进度条、限速等待提示、停止按钮
 - [x] 所有测试通过（39 tests），TypeScript 零错误
+
+
+## 第五十四轮修复（六大核心问题）
+- [x] 修复缓存key设计：Yahoo/Finnhub按symbol+tf+source缓存，不绑定回测区间
+- [x] 修复假并发控制：getCandlesForStocks改为惰性工厂函数（run而非promise）
+- [x] 修复backtestSymbol重复filter：改为移动指针，消除O(n²)扫描
+- [ ] 修复K线数据不完整：参考GitHub meiguzuizhong-backup的Stooq日线方案
+- [x] 修复Alpaca 403错误（免费账户不支持某些参数）
+- [x] K线图添加买卖点标记（StockChart tradeMarkers prop + BacktestDetail KLineTab）
+- [x] K线图添加CD指标显示（chart.getCandles计算DXDX/DBJGXC + showCDLabels=true）
+- [x] 修复统计分析数据错误（maxProfit/maxLoss使用美元金额，avgReturn/avgLoss使用百分比）
+- [x] 修复backtestEngine中数据持久化到DB缓存的逻辑

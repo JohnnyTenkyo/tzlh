@@ -1,5 +1,5 @@
 import { useParams, useLocation } from "wouter";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { useLocalAuth } from "@/contexts/AuthContext";
 import Layout from "@/components/Layout";
@@ -17,7 +17,7 @@ import {
   BarChart2, Clock, Target, AlertCircle, Loader2,
   ArrowUpRight, ArrowDownRight, Info
 } from "lucide-react";
-import StockChart from "@/components/StockChart";
+import StockChart, { TradeMarker } from "@/components/StockChart";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TIMEFRAME_LABELS, MARKET_CAP_LABELS } from "@shared/stockPool";
 
@@ -46,11 +46,11 @@ function KLineTab({
   startDate,
   endDate,
 }: {
-  trades: Array<{ symbol: string; type: string; tradeDate: string; price: string }>;
+  trades: Array<{ symbol: string; type: string; tradeDate: string; price: string; signalType?: string }>;
   startDate: string;
   endDate: string;
 }) {
-  const symbols = Array.from(new Set(trades.map((t) => t.symbol)));
+  const symbols = useMemo(() => Array.from(new Set(trades.map((t) => t.symbol))), [trades]);
   const [selectedSymbol, setSelectedSymbol] = useState<string>(symbols[0] || "");
   const [selectedTf, setSelectedTf] = useState<string>("1d");
 
@@ -58,6 +58,23 @@ function KLineTab({
     { symbol: selectedSymbol, timeframe: selectedTf, startDate, endDate },
     { enabled: !!selectedSymbol }
   );
+
+  // 将回测交易记录转换为 K 线图上的买卖点标记
+  const tradeMarkers: TradeMarker[] = useMemo(() => {
+    if (!selectedSymbol || !trades.length) return [];
+    return trades
+      .filter((t) => t.symbol === selectedSymbol)
+      .map((t) => {
+        const dateTs = new Date(`${t.tradeDate}T16:00:00.000Z`).getTime(); // 美东收盘时间
+        const signalLabel = SIGNAL_TYPE_LABELS[t.signalType || ""] || (t.type === "buy" ? "买入" : "卖出");
+        return {
+          time: dateTs,
+          type: t.type as "buy" | "sell",
+          price: parseFloat(t.price),
+          label: `${t.type === "buy" ? "B" : "S"} $${parseFloat(t.price).toFixed(1)}`,
+        };
+      });
+  }, [trades, selectedSymbol]);
 
   if (symbols.length === 0) {
     return (
@@ -73,7 +90,7 @@ function KLineTab({
     <Card className="bg-card border-border">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <CardTitle className="text-sm font-medium">K线图（黄蓝梯子 + 买卖点标注）</CardTitle>
+          <CardTitle className="text-sm font-medium">K线图（黄蓝梯子 + CD指标 + 买卖点标注）</CardTitle>
           <div className="flex gap-2">
             <Select value={selectedSymbol} onValueChange={setSelectedSymbol}>
               <SelectTrigger className="h-7 text-xs w-28">
@@ -110,12 +127,14 @@ function KLineTab({
             chanLunSignals={chartData.chanLunSignals}
             advancedChanData={chartData.advancedChanData}
             advancedChanSignals={chartData.advancedChanSignals}
+            tradeMarkers={tradeMarkers}
             height={450}
             showLadder={true}
+            showCDLabels={true}
           />
         )}
         <p className="text-xs text-muted-foreground mt-2 text-center">
-          绿色↑ = 买入点 | 红色↓ = 卖出点 | 蓝线 = 蓝色梯子 | 黄线 = 黄色梯子
+          绿色↑ = 买入点 | 红色↓ = 卖出点 | 蓝线 = 蓝色梯子 | 黄线 = 黄色梯子 | MACD副图 = CD抄底/卖出信号
         </p>
       </CardContent>
     </Card>
@@ -843,6 +862,11 @@ export default function BacktestDetail() {
                         value={totalReturn !== null && maxDrawdown !== null ? (totalReturn / Math.abs(maxDrawdown)).toFixed(2) : "--"}
                       />
                       <MetricCard
+                        label="平均盈利"
+                        value={session.avgProfit ? `${parseFloat(String(session.avgProfit)).toFixed(2)}%` : "--"}
+                        positive={true}
+                      />
+                      <MetricCard
                         label="最大单笔盈利"
                         value={session.maxProfit ? `$${parseFloat(String(session.maxProfit)).toLocaleString()}` : "--"}
                         positive={true}
@@ -855,7 +879,7 @@ export default function BacktestDetail() {
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       <MetricCard
                         label="最大单笔亏损"
-                        value={session.maxLoss ? `-$${Math.abs(parseFloat(String(session.maxLoss))).toLocaleString()}` : "--"}
+                        value={session.maxLoss !== null && session.maxLoss !== undefined ? `$${parseFloat(String(session.maxLoss)).toLocaleString()}` : "--"}
                         positive={false}
                       />
                       <MetricCard

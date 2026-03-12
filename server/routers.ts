@@ -17,7 +17,7 @@ import jwt from "jsonwebtoken";
 import { getTodayRecommendations, runDailyScan, getScanStatus, getAllScanResults } from "./screener";
 import { getSchedulerStatus } from "./scheduler";
 import { runBacktest, isBacktestRunning } from "./backtestEngine";
-import { calculateLadder } from "./indicators";
+import { calculateLadder, calculateCDSignal } from "./indicators";
 import type { Timeframe } from "./indicators";
 import { fetchHistoricalCandles } from './marketData';
 import { dataSourceHealth, cacheMetadata, historicalCandleCache } from "../drizzle/schema";
@@ -377,7 +377,12 @@ export const appRouter = router({
           return d.toISOString().split("T")[0];
         })();
 
-        const candles = await fetchHistoricalCandles(input.symbol, tf, startDate, endDate);
+        // 为了 EMA/MACD 预热，往前多取 180 天数据
+        const warmupDate = new Date(startDate);
+        warmupDate.setDate(warmupDate.getDate() - 180);
+        const dataStartDate = warmupDate.toISOString().split("T")[0];
+
+        const candles = await fetchHistoricalCandles(input.symbol, tf, dataStartDate, endDate);
         if (candles.length === 0) {
           return {
             candles: [],
@@ -391,15 +396,44 @@ export const appRouter = router({
           };
         }
 
-        // 计算黄蓝梯子指标
-        const ladder = calculateLadder(candles);
+        // 计算 CD 信号（在全量数据上计算，包括预热区间）
+        const cdResult = calculateCDSignal(candles);
+        const cdSignals: Array<{ time: number; type: 'buy' | 'sell'; strength: 'strong' | 'medium' | 'weak'; label: string; diffValue?: number; deaValue?: number; macdValue?: number }> = [];
+        for (let i = 0; i < candles.length; i++) {
+          if (cdResult.dxdx[i]) {
+            cdSignals.push({
+              time: candles[i].time,
+              type: 'buy',
+              strength: 'strong',
+              label: '抄底',
+              diffValue: cdResult.diff[i],
+              deaValue: cdResult.dea[i],
+              macdValue: cdResult.macd[i],
+            });
+          }
+          if (cdResult.dbjgxc[i]) {
+            cdSignals.push({
+              time: candles[i].time,
+              type: 'sell',
+              strength: 'strong',
+              label: '卖出',
+              diffValue: cdResult.diff[i],
+              deaValue: cdResult.dea[i],
+              macdValue: cdResult.macd[i],
+            });
+          }
+        }
 
-        // 返回新的 StockChart Props 格式
+        // 只返回用户请求范围内的 K 线（去掉预热部分）
+        const requestStartTs = new Date(`${startDate}T00:00:00.000Z`).getTime();
+        const filteredCandles = candles.filter(c => c.time >= requestStartTs);
+        const filteredCDSignals = cdSignals.filter(s => s.time >= requestStartTs);
+
         return {
-          candles,
+          candles: filteredCandles,
           interval: tf as any,
-          cdSignals: [] as any,
-          buySellPressure: candles.map((c, i) => ({
+          cdSignals: filteredCDSignals,
+          buySellPressure: filteredCandles.map((c) => ({
             time: c.time,
             pressure: 0,
             changeRate: 0,
